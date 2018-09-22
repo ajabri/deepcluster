@@ -143,6 +143,10 @@ def main():
         # preprocessing of data
         mean=[0.29501004, 0.34140844, 0.3667595 ]
         std=[0.16179572, 0.1323428 , 0.1213659 ]
+        
+        mean=[0.4091152 , 0.38996586, 0.35839223]
+        std=[0.16179572, 0.1323428 , 0.1213659 ]
+
         normalize = transforms.Normalize(mean=mean,
                                         std=std)
         unnormalize = transforms.Normalize(mean=[(-mean[i] / std[i]) for i in range(3)],

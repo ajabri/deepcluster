@@ -137,8 +137,13 @@ def cluster_assign(images_lists, dataset):
         image_indexes.extend(images)
         pseudolabels.extend([cluster] * len(images))
 
-    normalize = transforms.Normalize(mean=[0.29501004, 0.34140844, 0.3667595 ],
-                                    std=[0.16179572, 0.1323428 , 0.1213659 ])
+    normalize = transforms.Normalize(
+        std=[0.12303435, 0.13653513, 0.16653976],
+        mean=[0.4091152 , 0.38996586, 0.35839223])
+    
+        #mean=[0.29501004, 0.34140844, 0.3667595 ],
+        #std=[0.16179572, 0.1323428 , 0.1213659 ])
+
     t = transforms.Compose([
         transforms.Resize([128, 128]),
         transforms.RandomResizedCrop(128, scale=(0.8, 0.9), ratio=(1, 1),),
