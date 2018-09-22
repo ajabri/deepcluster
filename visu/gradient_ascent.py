@@ -21,7 +21,7 @@ from util import load_model
 
 parser = argparse.ArgumentParser(description='Gradient ascent visualisation')
 parser.add_argument('--model', type=str, help='Model')
-parser.add_argument('--arch', type=str, default='alexnet', choices=['alexnet', 'vgg16'], help='arch')
+parser.add_argument('--arch', type=str, default='alexnet', choices=['alexnet', 'vgg16', 'resnet18'], help='arch')
 parser.add_argument('--conv', type=int, default=1, help='convolutional layer')
 parser.add_argument('--exp', type=str, default='', help='path to res')
 parser.add_argument('--lr', type=float, default=3, help='learning rate (default: 3)')
@@ -57,7 +57,7 @@ def main():
     model.eval()
 
     def gradient_ascent(f):
-        print f,
+        print(f)
         sys.stdout.flush()
         fname_out = '{0}/layer{1}-channel{2}.jpeg'.format(repo, args.conv, f)
 

@@ -6,9 +6,9 @@
 #
 #!/bin/bash
 
-MODEL='/private/home/mathilde/model-to-release/vgg16/checkpoint.pth.tar'
-EXP='/private/home/mathilde/temp'
+MODEL='/home/jabreezus/clones/deepcluster/vizdoom1/checkpoint.pth.tar'
+EXP='/home/jabreezus/clones/deepcluster/vizdoom1/'
 CONV=5
-DATA='/datasets01/imagenet_full_size/061417/val'
+DATA='/data/ajabri/vizdoom/map500_100k/'
 
 python activ-retrieval.py --model ${MODEL} --exp ${EXP} --conv ${CONV} --data ${DATA}

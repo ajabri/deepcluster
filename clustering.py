@@ -137,12 +137,25 @@ def cluster_assign(images_lists, dataset):
         image_indexes.extend(images)
         pseudolabels.extend([cluster] * len(images))
 
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
-    t = transforms.Compose([transforms.RandomResizedCrop(224),
-                            transforms.RandomHorizontalFlip(),
-                            transforms.ToTensor(),
-                            normalize])
+    normalize = transforms.Normalize(mean=[0.29501004, 0.34140844, 0.3667595 ],
+                                    std=[0.16179572, 0.1323428 , 0.1213659 ])
+    t = transforms.Compose([
+        transforms.Resize([128, 128]),
+        transforms.RandomResizedCrop(128, scale=(0.8, 0.9), ratio=(1, 1),),
+        transforms.Lambda(
+            # lambda crops: torch.stack([ToTensor()(crop) for crop in crops])
+            lambda x: transforms.functional.crop(x, 128/2, 128/4, 128/2, 128/2)
+        ),
+        transforms.Resize([128, 128]),
+        transforms.ToTensor(),
+        normalize])
+
+    # normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+    #                                  std=[0.229, 0.224, 0.225])
+    # t = transforms.Compose([transforms.RandomResizedCrop(224),
+    #                         transforms.RandomHorizontalFlip(),
+    #                         transforms.ToTensor(),
+    #                         normalize])
 
     return ReassignedDataset(image_indexes, pseudolabels, dataset, t)
 

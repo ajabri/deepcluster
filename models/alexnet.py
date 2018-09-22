@@ -7,10 +7,13 @@ import torch.nn as nn
 __all__ = [ 'AlexNet', 'alexnet']
  
 # (number of filters, kernel size, stride, pad)
-CFG = {
-    '2012': [(96, 11, 4, 2), 'M', (256, 5, 1, 2), 'M', (384, 3, 1, 1), (384, 3, 1, 1), (256, 3, 1, 1), 'M']
-}
+# CFG = {
+#     '2012': [(96, 11, 4, 2), 'M', (256, 5, 1, 2), 'M', (384, 3, 1, 1), (384, 3, 1, 1), (256, 3, 1, 1), 'M']
+# }
 
+CFG = {
+    '2012': [(96, 11, 4, 2), 'M', (256, 5, 1, 2), 'M', (384, 3, 2, 1), (384, 3, 1, 1), (1024, 3, 1, 1), 'M']
+}
 
 class AlexNet(nn.Module):
     def __init__(self, features, num_classes, sobel):
