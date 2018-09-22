@@ -39,7 +39,10 @@ parser.add_argument('--clustering', type=str, choices=['Kmeans', 'PIC'],
 parser.add_argument('--sobel', action='store_true', default=False, help='Sobel filtering')
 parser.add_argument('--nmb_cluster', '--k', type=int, default=10000,
                     help='number of cluster for k-means (default: 10000)')
-
+parser.add_argument('--lr', default=0.05, type=float,
+                    help='learning rate (default: 0.05)')
+parser.add_argument('--wd', default=-5, type=float,
+                    help='weight decay pow (default: -5)')
 parser.add_argument('--reassign', type=float, default=1.,
                     help="""how many epochs of training between two consecutive
                     reassignments of clusters (default: 1)""")
@@ -67,7 +70,7 @@ def main():
 
 
     import visdom 
-    vis = visdom.Visdom(port=8095, env=args.resume.split('/')[0])
+    vis = visdom.Visdom(port=8095, env=args.resume.split('/')[-2])
 
     # fix random seeds
     torch.manual_seed(args.seed)
@@ -79,7 +82,6 @@ def main():
         print('Architecture: {}'.format(args.arch))
     
     model = models.__dict__[args.arch](sobel=args.sobel)
-    fd = int(model.top_layer.weight.size()[1])
     
     model.top_layer = None
     model.features = torch.nn.DataParallel(model.features)
@@ -104,9 +106,10 @@ def main():
             checkpoint = torch.load(args.resume)
             args.start_epoch = checkpoint['epoch']
             # remove top_layer parameters from checkpoint
-            # for key in checkpoint['state_dict']:
-            #     if 'top_layer' in key:
-            #         del checkpoint['state_dict'][key]
+            for key in list(checkpoint['state_dict'].keys()):
+                if 'num_batches' in key:
+                    del checkpoint['state_dict'][key]
+
             model.load_state_dict(checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
             print("=> loaded checkpoint '{}' (epoch {})"
@@ -137,9 +140,17 @@ def main():
         # data_tensor = torch.from_numpy(np.load(args.data))
         # dataset = TensorDataset(data_tensor)
 
+        if '/data/' in args.data:
         # preprocessing of data
-        mean=[0.29501004, 0.34140844, 0.3667595 ]
-        std=[0.16179572, 0.1323428 , 0.1213659 ]
+            mean=[0.29501004, 0.34140844, 0.3667595 ]
+            std=[0.16179572, 0.1323428 , 0.1213659 ]
+
+        elif '/data3/' in args.data:
+            std=[0.12303435, 0.13653513, 0.16653976]
+            mean=[0.4091152 , 0.38996586, 0.35839223]
+        else:
+            except 'which normalization?'
+
         normalize = transforms.Normalize(mean=mean,
                                         std=std)
         unnormalize = transforms.Normalize(mean=[(-mean[i] / std[i]) for i in range(3)],
@@ -189,9 +200,17 @@ def main():
     # cluster the features
     clustering_loss = deepcluster.cluster(features, verbose=args.verbose)
 
-    # assign pseudo-labels
-    train_dataset = clustering.cluster_assign(deepcluster.images_lists,
-                                                dataset.imgs)
+    centroids = faiss.vector_float_to_array(deepcluster.clus.centroids)
+    centroids = centroids.reshape(args.nmb_cluster, 256)
+
+    faiss.write_VectorTransform(deepcluster.mat, args.resume + '.pca')
+    
+    model.features = model.features.module
+    torch.save({
+        'state_dict': model.state_dict(), 'centroids': centroids,
+        'pca_path': args.resume + '.pca',
+        'mean': mean, 'std': std},
+        args.resume + '.clus')
 
     import random
     # import pdb; pdb.set_trace()

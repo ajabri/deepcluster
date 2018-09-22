@@ -94,7 +94,7 @@ def preprocess_features(npdata, pca=256):
     row_sums = np.linalg.norm(npdata, axis=1)
     npdata = npdata / row_sums[:, np.newaxis]
 
-    return npdata
+    return npdata, mat
 
 
 def make_graph(xb, nnn):
@@ -120,7 +120,7 @@ def make_graph(xb, nnn):
     return I, D
 
 
-def cluster_assign(images_lists, dataset):
+def cluster_assign(images_lists, dataset, mean, std):
     """Creates a dataset from clustering, with clusters as labels.
     Args:
         images_lists (list of list): for each cluster, the list of image indexes
@@ -137,8 +137,11 @@ def cluster_assign(images_lists, dataset):
         image_indexes.extend(images)
         pseudolabels.extend([cluster] * len(images))
 
-    normalize = transforms.Normalize(mean=[0.29501004, 0.34140844, 0.3667595 ],
-                                    std=[0.16179572, 0.1323428 , 0.1213659 ])
+    # normalize = transforms.Normalize(mean=[0.29501004, 0.34140844, 0.3667595 ],
+    #                                 std=[0.16179572, 0.1323428 , 0.1213659 ])
+
+    normalize = transforms.Normalize(mean=mean, std=std)
+    
     t = transforms.Compose([
         transforms.Resize([128, 128]),
         transforms.RandomResizedCrop(128, scale=(0.8, 0.9), ratio=(1, 1),),
@@ -187,7 +190,7 @@ def run_kmeans(x, nmb_clusters, verbose=False):
     if verbose:
         print('k-means loss evolution: {0}'.format(losses))
 
-    return [int(n[0]) for n in I], losses[-1]
+    return [int(n[0]) for n in I], losses[-1], clus
 
 
 def arrange_clustering(images_lists):
@@ -212,10 +215,10 @@ class Kmeans:
         end = time.time()
 
         # PCA-reducing, whitening and L2-normalization
-        xb = preprocess_features(data)
+        xb, self.mat = preprocess_features(data)
 
         # cluster the data
-        I, loss = run_kmeans(xb, self.k, verbose)
+        I, loss, self.clus = run_kmeans(xb, self.k, verbose)
         self.images_lists = [[] for i in range(self.k)]
         for i in range(len(data)):
             self.images_lists[I[i]].append(i)
@@ -345,7 +348,7 @@ class PIC():
         end = time.time()
 
         # preprocess the data
-        xb = preprocess_features(data)
+        xb, mat = preprocess_features(data)
 
         # construct nnn graph
         I, D = make_graph(xb, self.nnn)

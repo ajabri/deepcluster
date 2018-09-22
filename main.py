@@ -141,8 +141,17 @@ def main():
         # dataset = TensorDataset(data_tensor)
 
         # preprocessing of data
-        mean=[0.29501004, 0.34140844, 0.3667595 ]
-        std=[0.16179572, 0.1323428 , 0.1213659 ]
+        if '/data/' in args.data:
+        # preprocessing of data
+            mean=[0.29501004, 0.34140844, 0.3667595 ]
+            std=[0.16179572, 0.1323428 , 0.1213659 ]
+
+        elif '/data3/' in args.data:
+            std=[0.12303435, 0.13653513, 0.16653976]
+            mean=[0.4091152 , 0.38996586, 0.35839223]
+        else:
+            except 'which normalization?'
+
         normalize = transforms.Normalize(mean=mean,
                                         std=std)
         unnormalize = transforms.Normalize(mean=[(-mean[i] / std[i]) for i in range(3)],
@@ -197,9 +206,7 @@ def main():
 
         # assign pseudo-labels
         train_dataset = clustering.cluster_assign(deepcluster.images_lists,
-                                                  dataset.imgs)
-
-        # import pdb; pdb.set_trace()
+                                                  dataset.imgs, mean, std)
 
         # uniformely sample per target
         sampler = UnifLabelSampler(int(args.reassign * len(train_dataset)),
