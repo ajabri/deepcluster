@@ -150,7 +150,7 @@ def main():
             std=[0.12303435, 0.13653513, 0.16653976]
             mean=[0.4091152 , 0.38996586, 0.35839223]
         else:
-            except 'which normalization?'
+            assert False, 'which normalization?'
 
         normalize = transforms.Normalize(mean=mean,
                                         std=std)

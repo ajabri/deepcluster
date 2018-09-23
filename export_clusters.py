@@ -63,93 +63,79 @@ parser.add_argument('--seed', type=int, default=31, help='random seed (default: 
 parser.add_argument('--exp', type=str, default='', help='path to exp folder')
 parser.add_argument('--verbose', action='store_true', help='chatty')
 
+args = parser.parse_args()
 
-def main():
-    global args
-    args = parser.parse_args()
+def main(args):
+    # global args
+    # args = parser.parse_args()
+
+    resume = args.resume
+    batch = args.batch
+    data_path = args.data
+    sobel = args.sobel
+    clustering_type = args.clustering
+    verbose = True #args.verbose
+    nmb_cluster = args.nmb_cluster
+    arch = 'resnet18'
+    workers = 4
+
+    seed = 31
 
 
     import visdom 
-    vis = visdom.Visdom(port=8095, env=args.resume.split('/')[-2])
+    vis = visdom.Visdom(port=8095, env=resume.split('/')[-2])
 
     # fix random seeds
-    torch.manual_seed(args.seed)
-    torch.cuda.manual_seed_all(args.seed)
-    np.random.seed(args.seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
 
     # CNN
-    if args.verbose:
-        print('Architecture: {}'.format(args.arch))
+    if verbose:
+        print('Architecture: {}'.format(arch))
     
-    model = models.__dict__[args.arch](sobel=args.sobel)
+    model = models.__dict__[arch](sobel=sobel)
     
     model.top_layer = None
     model.features = torch.nn.DataParallel(model.features)
     model.cuda()
     cudnn.benchmark = True
 
-    # create optimizer
-    optimizer = torch.optim.SGD(
-        filter(lambda x: x.requires_grad, model.parameters()),
-        lr=args.lr,
-        momentum=args.momentum,
-        weight_decay=10**args.wd,
-    )
-
-    # define loss function
-    criterion = nn.CrossEntropyLoss().cuda()
 
     # optionally resume from a checkpoint
-    if args.resume:
-        if os.path.isfile(args.resume):
-            print("=> loading checkpoint '{}'".format(args.resume))
-            checkpoint = torch.load(args.resume)
-            args.start_epoch = checkpoint['epoch']
+    if resume:
+        if os.path.isfile(resume):
+            print("=> loading checkpoint '{}'".format(resume))
+            checkpoint = torch.load(resume)
+
             # remove top_layer parameters from checkpoint
             for key in list(checkpoint['state_dict'].keys()):
                 if 'num_batches' in key:
                     del checkpoint['state_dict'][key]
 
             model.load_state_dict(checkpoint['state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer'])
             print("=> loaded checkpoint '{}' (epoch {})"
-                  .format(args.resume, checkpoint['epoch']))
+                  .format(resume, checkpoint['epoch']))
         else:
-            print("=> no checkpoint found at '{}'".format(args.resume))
-
-    # creating checkpoint repo
-    # exp_check = os.path.join(args.exp, 'checkpoints')
-    # if not os.path.isdir(exp_check):
-    #     os.makedirs(exp_check)
-
-    # # creating cluster assignments log
-    # cluster_log = Logger(os.path.join(args.exp, 'clusters'))
-
-    # preprocessing of data
-    # normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-    #                                  std=[0.229, 0.224, 0.225])
-    # tra = [transforms.Resize(256),
-    #        transforms.CenterCrop(224),
-    #        transforms.ToTensor(),
-    #        normalize]
+            print("=> no checkpoint found at '{}'".format(resume))
 
     # load the data
     end = time.time()
-    if 'vizdoom' in args.data:
+    if 'vizdoom' in data_path:
         # import pdb; pdb.set_trace()
-        # data_tensor = torch.from_numpy(np.load(args.data))
+        # data_tensor = torch.from_numpy(np.load(data_path))
         # dataset = TensorDataset(data_tensor)
 
-        if '/data/' in args.data:
+        if '/data/' in data_path:
         # preprocessing of data
             mean=[0.29501004, 0.34140844, 0.3667595 ]
             std=[0.16179572, 0.1323428 , 0.1213659 ]
 
-        elif '/data3/' in args.data:
+        elif '/data3/' in data_path:
             std=[0.12303435, 0.13653513, 0.16653976]
             mean=[0.4091152 , 0.38996586, 0.35839223]
         else:
-            except 'which normalization?'
+            assert False, 'which normalization?'
 
         normalize = transforms.Normalize(mean=mean,
                                         std=std)
@@ -161,13 +147,13 @@ def main():
             transforms.ToTensor(),
             normalize]
         
-        if 'bottom' in args.resume:
+        if 'bottom' in resume:
             tra = [transforms.Resize([128, 128]),
                 transforms.Lambda(
                     # lambda crops: torch.stack([ToTensor()(crop) for crop in crops])
                 lambda x: transforms.functional.crop(x, 128/2, 0, 128/2, 128)
             )] + tra
-        dataset = datasets.ImageFolder(args.data, transform=transforms.Compose(tra))
+        dataset = datasets.ImageFolder(data_path, transform=transforms.Compose(tra))
         # import pdb; pdb.set_trace()
 
     else:
@@ -178,16 +164,16 @@ def main():
             transforms.CenterCrop(224),
             transforms.ToTensor(),
             normalize]
-        dataset = datasets.ImageFolder(args.data, transform=transforms.Compose(tra))
+        dataset = datasets.ImageFolder(data_path, transform=transforms.Compose(tra))
 
-    if args.verbose: print('Load dataset: {0:.2f} s'.format(time.time() - end))
+    if verbose: print('Load dataset: {0:.2f} s'.format(time.time() - end))
     dataloader = torch.utils.data.DataLoader(dataset,
-                                             batch_size=args.batch,
-                                             num_workers=args.workers,
+                                             batch_size=batch,
+                                             num_workers=workers,
                                              pin_memory=True)
 
     # clustering algorithm to use
-    deepcluster = clustering.__dict__[args.clustering](args.nmb_cluster)
+    deepcluster = clustering.__dict__[clustering_type](nmb_cluster)
 
 
     # remove head
@@ -198,22 +184,27 @@ def main():
     features = compute_features(dataloader, model, len(dataset))
 
     # cluster the features
-    clustering_loss = deepcluster.cluster(features, verbose=args.verbose)
+    clustering_loss = deepcluster.cluster(features, verbose=verbose)
 
     centroids = faiss.vector_float_to_array(deepcluster.clus.centroids)
-    centroids = centroids.reshape(args.nmb_cluster, 256)
+    centroids = centroids.reshape(nmb_cluster, 256)
 
-    faiss.write_VectorTransform(deepcluster.mat, args.resume + '.pca')
+    faiss.write_VectorTransform(deepcluster.mat, resume + '.pca')
     
     model.features = model.features.module
+
+    c_mean, c_cov = get_means_and_variances(deepcluster, features)
+
     torch.save({
         'state_dict': model.state_dict(), 'centroids': centroids,
-        'pca_path': args.resume + '.pca',
-        'mean': mean, 'std': std},
-        args.resume + '.clus')
+        'pca_path': resume + '.pca',
+        'mean': mean, 'std': std,
+        'cluster_mean': c_mean, 'cluster_cov': c_cov
+        },
+        resume + '.clus')
 
     import random
-    # import pdb; pdb.set_trace()
+    import pdb; pdb.set_trace()
     sorted_lists = sorted(deepcluster.images_lists, key=len)#[::-1] 
     sorted_lists = [s for s in sorted_lists if len(s) > 7]
 
@@ -225,10 +216,43 @@ def main():
 
     # import pdb; pdb.set_trace()
 
-        
+def get_means_and_variances(dc, features):
+    m = []
+    v = []
+    for i in range(args.nmb_cluster):
+        feats = preprocess_features(dc.mat, features[dc.images_lists[i]])
+        mm = feats.mean(0)
+        xx = feats - mm
+        cov = (xx.transpose() @ xx) / len(dc.images_lists[i])
+        m.append(mm )
+        v.append(cov)
+
+    return m, v
+
+def preprocess_features(mat, npdata, pca=256):
+    """Preprocess an array of features.
+    Args:
+        npdata (np.array N * ndim): features to preprocess
+        pca (int): dim of output
+    Returns:
+        np.array of dim N * pca: data PCA-reduced, whitened and L2-normalized
+    """
+
+    _, ndim = npdata.shape
+    npdata =  npdata.astype('float32')
+
+    # Apply PCA-whitening with Faiss
+    assert mat.is_trained
+    npdata = mat.apply_py(npdata)
+
+    # L2 normalization
+    row_sums = np.linalg.norm(npdata, axis=1)
+    npdata = npdata / row_sums[:, np.newaxis]
+
+    return npdata
+    
 def compute_features(dataloader, model, N):
-    if args.verbose:
-        print('Compute features')
+    print('Compute features')
     batch_time = AverageMeter()
     end = time.time()
     model.eval()
@@ -252,12 +276,12 @@ def compute_features(dataloader, model, N):
         batch_time.update(time.time() - end)
         end = time.time()
 
-        if args.verbose and (i % 200) == 0:
+        if (i % 200) == 0:
             print('{0} / {1}\t'
-                  'Time: {batch_time.val:.3f} ({batch_time.avg:.3f})'
-                  .format(i, len(dataloader), batch_time=batch_time))
+                    'Time: {batch_time.val:.3f} ({batch_time.avg:.3f})'
+                    .format(i, len(dataloader), batch_time=batch_time))
     return features
 
 
 if __name__ == '__main__':
-    main()
+    main(args)
