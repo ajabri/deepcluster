@@ -141,7 +141,7 @@ def cluster_assign(images_lists, dataset, mean, std):
     #                                 std=[0.16179572, 0.1323428 , 0.1213659 ])
 
     normalize = transforms.Normalize(mean=mean, std=std)
-    
+
     t = transforms.Compose([
         transforms.Resize([128, 128]),
         transforms.RandomResizedCrop(128, scale=(0.8, 0.9), ratio=(1, 1),),
@@ -190,7 +190,7 @@ def run_kmeans(x, nmb_clusters, verbose=False):
     if verbose:
         print('k-means loss evolution: {0}'.format(losses))
 
-    return [int(n[0]) for n in I], losses[-1], clus
+    return [int(n[0]) for n in I], losses[-1], clus, index
 
 
 def arrange_clustering(images_lists):
@@ -218,7 +218,7 @@ class Kmeans:
         xb, self.mat = preprocess_features(data)
 
         # cluster the data
-        I, loss, self.clus = run_kmeans(xb, self.k, verbose)
+        I, loss, self.clus, self.index = run_kmeans(xb, self.k, verbose)
         self.images_lists = [[] for i in range(self.k)]
         for i in range(len(data)):
             self.images_lists[I[i]].append(i)
