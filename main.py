@@ -26,51 +26,20 @@ import torch.utils.data
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 from torch.utils.data import TensorDataset
-
+import folder
 import clustering
 import models
+
+import util
 from util import AverageMeter, Logger, UnifLabelSampler
+import vis_utils
 
+import export_clusters as export
 
-parser = argparse.ArgumentParser(description='PyTorch Implementation of DeepCluster')
+parser = util.get_argparse()
+args = parser.parse_args()
 
-parser.add_argument('data', metavar='DIR', help='path to dataset')
-parser.add_argument('--arch', '-a', type=str, metavar='ARCH',
-                    choices=['alexnet', 'vgg16', 'resnet18'], default='alexnet',
-                    help='CNN architecture (default: alexnet)')
-parser.add_argument('--sobel', action='store_true', default=False, help='Sobel filtering')
-parser.add_argument('--clustering', type=str, choices=['Kmeans', 'PIC'],
-                    default='Kmeans', help='clustering algorithm (default: Kmeans)')
-parser.add_argument('--nmb_cluster', '--k', type=int, default=10000,
-                    help='number of cluster for k-means (default: 10000)')
-parser.add_argument('--lr', default=0.05, type=float,
-                    help='learning rate (default: 0.05)')
-parser.add_argument('--wd', default=-5, type=float,
-                    help='weight decay pow (default: -5)')
-parser.add_argument('--reassign', type=float, default=1.,
-                    help="""how many epochs of training between two consecutive
-                    reassignments of clusters (default: 1)""")
-parser.add_argument('--workers', default=4, type=int,
-                    help='number of data loading workers (default: 4)')
-parser.add_argument('--epochs', type=int, default=200,
-                    help='number of total epochs to run (default: 200)')
-parser.add_argument('--start_epoch', default=0, type=int,
-                    help='manual epoch number (useful on restarts) (default: 0)')
-parser.add_argument('--batch', default=256, type=int,
-                    help='mini-batch size (default: 256)')
-parser.add_argument('--momentum', default=0.9, type=float, help='momentum (default: 0.9)')
-parser.add_argument('--resume', default='', type=str, metavar='PATH',
-                    help='path to checkpoint (default: None)')
-parser.add_argument('--checkpoints', type=int, default=25000,
-                    help='how many iterations between two checkpoints (default: 25000)')
-parser.add_argument('--seed', type=int, default=31, help='random seed (default: 31)')
-parser.add_argument('--exp', type=str, default='', help='path to exp folder')
-parser.add_argument('--verbose', action='store_true', help='chatty')
-
-
-def main():
-    global args
-    args = parser.parse_args()
+def main(args):
 
     # fix random seeds
     torch.manual_seed(args.seed)
@@ -81,7 +50,7 @@ def main():
     if args.verbose:
         print('Architecture: {}'.format(args.arch))
     
-    model = models.__dict__[args.arch](sobel=args.sobel)
+    model = models.__dict__[args.arch](sobel=args.sobel, traj_enc=args.traj_enc)
     fd = int(model.top_layer.weight.size()[1])
     
     model.top_layer = None
@@ -102,21 +71,8 @@ def main():
 
     # optionally resume from a checkpoint
     if args.resume:
-        if os.path.isfile(args.resume):
-            print("=> loading checkpoint '{}'".format(args.resume))
-            checkpoint = torch.load(args.resume)
-            args.start_epoch = checkpoint['epoch']
-            # remove top_layer parameters from checkpoint
-            # for key in checkpoint['state_dict']:
-            #     if 'top_layer' in key:
-            #         del checkpoint['state_dict'][key]
-            model.load_state_dict(checkpoint['state_dict'])
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            print("=> loaded checkpoint '{}' (epoch {})"
-                  .format(args.resume, checkpoint['epoch']))
-        else:
-            print("=> no checkpoint found at '{}'".format(args.resume))
-
+        util.resume_model(resume, model)
+    
     # creating checkpoint repo
     exp_check = os.path.join(args.exp, 'checkpoints')
     if not os.path.isdir(exp_check):
@@ -125,70 +81,29 @@ def main():
     # creating cluster assignments log
     cluster_log = Logger(os.path.join(args.exp, 'clusters'))
 
-    # preprocessing of data
-    # normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-    #                                  std=[0.229, 0.224, 0.225])
-    # tra = [transforms.Resize(256),
-    #        transforms.CenterCrop(224),
-    #        transforms.ToTensor(),
-    #        normalize]
+    smoother = models.mini_models.GaussianSmoothing(3, 5, 1)
 
     # load the data
     end = time.time()
-    if 'vizdoom' in args.data:
-        # import pdb; pdb.set_trace()
-        # data_tensor = torch.from_numpy(np.load(args.data))
-        # dataset = TensorDataset(data_tensor)
 
-        # preprocessing of data
-        if '/data/' in args.data:
-        # preprocessing of data
-            mean=[0.29501004, 0.34140844, 0.3667595 ]
-            std=[0.16179572, 0.1323428 , 0.1213659 ]
-
-        elif '/data3/' in args.data:
-            std=[0.12303435, 0.13653513, 0.16653976]
-            mean=[0.4091152 , 0.38996586, 0.35839223]
-        else:
-            assert False, 'which normalization?'
-
-        normalize = transforms.Normalize(mean=mean,
-                                        std=std)
-        unnormalize = transforms.Normalize(mean=[(-mean[i] / std[i]) for i in range(3)],
-                                std=[1.0 / std[i] for i in range(3)])
-
-        tra = [
-            transforms.Resize([128, 128]),
-            transforms.RandomResizedCrop(128, scale=(0.8, 0.9), ratio=(1, 1),),
-            transforms.Lambda(
-                # lambda crops: torch.stack([ToTensor()(crop) for crop in crops])
-                lambda x: transforms.functional.crop(x, 128/2, 0, 128/2, 128)
-            ),
-            transforms.Resize([128, 128]),
-            transforms.ToTensor(),
-            normalize]
-
-        dataset = datasets.ImageFolder(args.data, transform=transforms.Compose(tra))
-        # import pdb; pdb.set_trace()
-
-    else:
-        # preprocessing of data
-        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                        std=[0.229, 0.224, 0.225])
-        tra = [transforms.Resize(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            normalize]
-        dataset = datasets.ImageFolder(args.data, transform=transforms.Compose(tra))
+    tra, (mean, std), (m1, std1), (norm, unnorm) = vis_utils.make_transform(args.data)
+    dataset = folder.ImageFolder(args.data, transform=transforms.Compose(tra),
+        args=[args.ep_length, args.traj_length])
 
     if args.verbose: print('Load dataset: {0:.2f} s'.format(time.time() - end))
+
+    # import bow_dataset
     dataloader = torch.utils.data.DataLoader(dataset,
+                                            #  batch_sampler=sampler,
+                                             shuffle=False,
                                              batch_size=args.batch,
                                              num_workers=args.workers,
                                              pin_memory=True)
 
     # clustering algorithm to use
-    deepcluster = clustering.__dict__[args.clustering](args.nmb_cluster)
+    if args.group > 1:
+        args.group = args.ep_length - args.traj_length + 1
+    deepcluster = clustering.__dict__[args.clustering](args.nmb_cluster, group=args.group)
 
     # training convnet with DeepCluster
     for epoch in range(args.start_epoch, args.epochs):
@@ -199,22 +114,31 @@ def main():
         model.classifier = nn.Sequential(*list(model.classifier.children())[:-1])
 
         # get the features for the whole dataset
-        features = compute_features(dataloader, model, len(dataset))
+        print('computing features')
+        features, idxs = compute_features(dataloader, model, len(dataset))
+
+        idxs = idxs[np.argsort(idxs)]
+        features = features[np.argsort(idxs)]
 
         # cluster the features
-        clustering_loss = deepcluster.cluster(features, verbose=args.verbose)
+        # print('clustering')
+        print('clustering')
+        clustering_loss = deepcluster.cluster(features, verbose=args.verbose, mode='gmm')
+        print('cluster loss', clustering_loss)
 
         # assign pseudo-labels
-        train_dataset = clustering.cluster_assign(deepcluster.images_lists,
-                                                  dataset.imgs, mean, std)
+        print('assign clustering')
+        train_dataset = clustering.cluster_assign(
+            deepcluster.images_lists,
+            dataset.imgs, mean, std)
 
         # uniformely sample per target
         sampler = UnifLabelSampler(int(args.reassign * len(train_dataset)),
-                                   deepcluster.images_lists)
+                                   [ll for ll in deepcluster.images_lists if len(ll) > 0])
 
         train_dataloader = torch.utils.data.DataLoader(
             train_dataset,
-            batch_size=args.batch,
+            batch_size=int(args.batch / 4),
             num_workers=args.workers,
             sampler=sampler,
             pin_memory=True,
@@ -259,6 +183,10 @@ def main():
         # save cluster assignments
         cluster_log.log(deepcluster.images_lists)
 
+    if args.export > 0:
+        export(args, model, dataloader, dataset)
+
+    return model, args, 
 
 def train(loader, model, crit, opt, epoch):
     """Training of the CNN.
@@ -286,55 +214,60 @@ def train(loader, model, crit, opt, epoch):
         weight_decay=10**args.wd,
     )
 
+
     end = time.time()
-    for i, (input_tensor, target) in enumerate(loader):
-        data_time.update(time.time() - end)
 
-        # save checkpoint
-        n = len(loader) * epoch + i
-        if n % args.checkpoints == 0:
-            path = os.path.join(
-                args.exp,
-                'checkpoints',
-                'checkpoint_' + str(n / args.checkpoints) + '.pth.tar',
-            )
-            if args.verbose:
-                print('Save checkpoint at: {0}'.format(path))
-            torch.save({
-                'epoch': epoch + 1,
-                'arch': args.arch,
-                'state_dict': model.state_dict(),
-                'optimizer' : opt.state_dict()
-            }, path)
+    for _ in range(1):
+        for i, (input_tensor, target) in enumerate(loader):
+            data_time.update(time.time() - end)
 
-        target = target.cuda(async=True)
-        input_var = torch.autograd.Variable(input_tensor.cuda())
-        target_var = torch.autograd.Variable(target)
+            # import pdb; pdb.set_trace() 
 
-        output = model(input_var)
-        loss = crit(output, target_var)
+            # save checkpoint
+            n = len(loader) * epoch + i
+            if n % args.checkpoints == 0:
+                path = os.path.join(
+                    args.exp,
+                    'checkpoints',
+                    'checkpoint_' + str(n / args.checkpoints) + '.pth.tar',
+                )
+                if args.verbose:
+                    print('Save checkpoint at: {0}'.format(path))
+                torch.save({
+                    'epoch': epoch + 1,
+                    'arch': args.arch,
+                    'state_dict': model.state_dict(),
+                    'optimizer' : opt.state_dict()
+                }, path)
 
-        # record loss
-        losses.update(loss.data[0], input_tensor.size(0))
+            target = target.cuda(async=True)
+            input_var = torch.autograd.Variable(input_tensor.cuda())
+            target_var = torch.autograd.Variable(target)
 
-        # compute gradient and do SGD step
-        opt.zero_grad()
-        optimizer_tl.zero_grad()
-        loss.backward()
-        opt.step()
-        optimizer_tl.step()
+            output = model(input_var)
+            loss = crit(output, target_var)
 
-        # measure elapsed time
-        batch_time.update(time.time() - end)
-        end = time.time()
+            # record loss
+            losses.update(loss.data[0], input_tensor.size(0))
 
-        if args.verbose and (i % 200) == 0:
-            print('Epoch: [{0}][{1}/{2}]\t'
-                  'Time: {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                  'Data: {data_time.val:.3f} ({data_time.avg:.3f})\t'
-                  'Loss: {loss.val:.4f} ({loss.avg:.4f})'
-                  .format(epoch, i, len(loader), batch_time=batch_time,
-                          data_time=data_time, loss=losses))
+            # compute gradient and do SGD step
+            opt.zero_grad()
+            optimizer_tl.zero_grad()
+            loss.backward()
+            opt.step()
+            optimizer_tl.step()
+
+            # measure elapsed time
+            batch_time.update(time.time() - end)
+            end = time.time()
+
+            if args.verbose and (i % 50) == 0:
+                print('Epoch: [{0}][{1}/{2}]\t'
+                    'Time: {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+                    'Data: {data_time.val:.3f} ({data_time.avg:.3f})\t'
+                    'Loss: {loss.val:.4f} ({loss.avg:.4f})'
+                    .format(epoch, i, len(loader), batch_time=batch_time,
+                            data_time=data_time, loss=losses))
 
     return losses.avg
 
@@ -345,31 +278,36 @@ def compute_features(dataloader, model, N):
     end = time.time()
     model.eval()
     # discard the label information in the dataloader
-    for i, (input_tensor, _) in enumerate(dataloader):
+    for i, (input_tensor, idx) in enumerate(dataloader):
+        # print(i)
         with torch.no_grad():
             input_var = torch.autograd.Variable(input_tensor.cuda())
 
         aux = model(input_var).data.cpu().numpy()
+        idx = idx.data.cpu().numpy()
 
         if i == 0:
             features = np.zeros((N, aux.shape[1])).astype('float32')
+            idxs = np.zeros((N)).astype(np.int)
 
         if i < len(dataloader) - 1:
             features[i * args.batch: (i + 1) * args.batch] = aux.astype('float32')
+            idxs[i * args.batch: (i + 1) * args.batch] = idx.astype(np.int)
         else:
             # special treatment for final batch
             features[i * args.batch:] = aux.astype('float32')
+            idxs[i * args.batch:] = idx.astype(np.int)
 
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
 
-        if args.verbose and (i % 200) == 0:
+        if args.verbose and (i % 50) == 0:
             print('{0} / {1}\t'
                   'Time: {batch_time.val:.3f} ({batch_time.avg:.3f})'
                   .format(i, len(dataloader), batch_time=batch_time))
-    return features
+    return features, idxs
 
 
 if __name__ == '__main__':
-    main()
+    main(args)

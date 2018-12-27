@@ -56,6 +56,19 @@ class ReassignedDataset(data.Dataset):
             images.append((path, pseudolabel))
         return images
 
+    # def __getitem__(self, index):
+    #     """
+    #     Args:
+    #         index (int): index of data
+    #     Returns:
+    #         tuple: (image, pseudolabel) where pseudolabel is the cluster of index datapoint
+    #     """
+    #     path, pseudolabel = self.imgs[index]
+    #     img = pil_loader(path)
+    #     if self.transform is not None:
+    #         img = self.transform(img)
+    #     return img, pseudolabel
+
     def __getitem__(self, index):
         """
         Args:
@@ -64,9 +77,16 @@ class ReassignedDataset(data.Dataset):
             tuple: (image, pseudolabel) where pseudolabel is the cluster of index datapoint
         """
         path, pseudolabel = self.imgs[index]
-        img = pil_loader(path)
-        if self.transform is not None:
-            img = self.transform(img)
+        # import pdb; pdb.set_trace()
+
+        def _sample(path):
+            img = pil_loader(path)
+            if self.transform is not None:
+                img = self.transform(img)
+            return img
+
+        img = np.stack([_sample(p) for p in path])
+
         return img, pseudolabel
 
     def __len__(self):
@@ -144,11 +164,11 @@ def cluster_assign(images_lists, dataset, mean, std):
 
     t = transforms.Compose([
         transforms.Resize([128, 128]),
-        transforms.RandomResizedCrop(128, scale=(0.8, 0.9), ratio=(1, 1),),
-        transforms.Lambda(
-            # lambda crops: torch.stack([ToTensor()(crop) for crop in crops])
-            lambda x: transforms.functional.crop(x, 128/2, 128/4, 128/2, 128/2)
-        ),
+        # transforms.RandomResizedCrop(128, scale=(0.8, 0.9), ratio=(1, 1),),
+        # transforms.Lambda(
+        #     # lambda crops: torch.stack([ToTensor()(crop) for crop in crops])
+        #     lambda x: transforms.functional.crop(x, 128/2, 128/4, 128/2, 128/2)
+        # ),
         transforms.Resize([128, 128]),
         transforms.ToTensor(),
         normalize])
@@ -176,21 +196,29 @@ def run_kmeans(x, nmb_clusters, verbose=False):
     # faiss implementation of k-means
     clus = faiss.Clustering(d, nmb_clusters)
     clus.niter = 20
-    clus.max_points_per_centroid = 10000000
+    clus.nredo = 10
+
+    clus.max_points_per_centroid = int(3*(n_data/nmb_clusters)) #10000000
     res = faiss.StandardGpuResources()
     flat_config = faiss.GpuIndexFlatConfig()
     flat_config.useFloat16 = False
     flat_config.device = 0
     index = faiss.GpuIndexFlatL2(res, d, flat_config)
 
+    # import pdb; pdb.set_trace()
+
     # perform the training
     clus.train(x, index)
-    _, I = index.search(x, 1)
+    
+    D, I = index.search(x, 1)
     losses = faiss.vector_to_array(clus.obj)
+
     if verbose:
         print('k-means loss evolution: {0}'.format(losses))
+    
+    # import pdb; pdb.set_trace()
 
-    return [int(n[0]) for n in I], losses[-1], clus, index
+    return [int(n[0]) for n in I], [float(n[0]) for n in D], losses[-1], clus, index, flat_config
 
 
 def arrange_clustering(images_lists):
@@ -203,11 +231,15 @@ def arrange_clustering(images_lists):
     return np.asarray(pseudolabels)[indexes]
 
 
-class Kmeans:
-    def __init__(self, k):
-        self.k = k
+import mixture.mixture as mix
 
-    def cluster(self, data, verbose=False):
+
+class Kmeans:
+    def __init__(self, k, group=10):
+        self.k = k
+        self.group = group
+
+    def cluster(self, data, verbose=False, mode='kmeans'):
         """Performs k-means clustering.
             Args:
                 x_data (np.array N * dim): data to cluster
@@ -218,15 +250,51 @@ class Kmeans:
         xb, self.mat = preprocess_features(data)
 
         # cluster the data
-        I, loss, self.clus, self.index = run_kmeans(xb, self.k, verbose)
+
+        # I, D, loss, self.clus, self.index, self.flat_config = run_kmeans(xb, self.k, verbose)
+        # import pdb; pdb.set_trace()
+
+        if mode == 'kmeans':
+            clus = mix.k_means_.KMeans(n_clusters=self.k, n_init=1,
+                precompute_distances=True, max_iter=50,
+                algorithm='full',
+                group=self.group if self.group > 1 else None).fit(xb)
+            D = clus.transform(xb)
+            loss = clus.inertia_
+            clus.centroids = clus.cluster_centers_
+            I, D = D.argmin(axis=1), -D.min(axis=1)
+        else:
+            clus = mix.BayesianGaussianMixture(n_components=self.k, group=self.group if self.group > 1 else None,
+                covariance_type='full',
+                weight_concentration_prior=1e3, weight_concentration_prior_type='dirichlet_process',
+                ).fit(xb)
+            clus.centroids = clus.means_
+            D = clus.predict_proba(xb)
+            # import pdb; pdb.set_trace()
+            loss = clus.score(xb)
+            I, D = D.argmax(axis=1), D.max(axis=1)
+
+        self.clus = clus
+
+        # import pdb; pdb.set_trace()
+        # clus = kmeans.KMeans(n_clusters=self.n_components, n_init=1,
+        #                            random_state=random_state, algorithm='full',
+        #                            group=self.group).fit(xb)
+                                   
+        
         self.images_lists = [[] for i in range(self.k)]
+        self.images_dists = [[] for i in range(self.k)]
         for i in range(len(data)):
             self.images_lists[I[i]].append(i)
+            self.images_dists[I[i]].append((i, D[i]))
 
         if verbose:
             print('k-means time: {0:.0f} s'.format(time.time() - end))
 
         return loss
+
+
+##############################################################################################
 
 
 def make_adjacencyW(I, D, sigma):
@@ -338,11 +406,12 @@ class PIC():
                                          belonging to this cluster
     """
 
-    def __init__(self, args=None, sigma=0.2, nnn=5, alpha=0.001, distribute_singletons=True):
+    def __init__(self, args=None, sigma=0.2, nnn=5, alpha=0.001, distribute_singletons=True, group=10):
         self.sigma = sigma
         self.alpha = alpha
         self.nnn = nnn
         self.distribute_singletons = distribute_singletons
+        self.group = group
 
     def cluster(self, data, verbose=False):
         end = time.time()

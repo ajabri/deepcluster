@@ -13,6 +13,7 @@ from torch.utils.data.sampler import Sampler
 
 import models
 
+import argparse
 
 def load_model(path):
     """Loads model and return it without DataParallel table."""
@@ -44,6 +45,70 @@ def load_model(path):
         model = None
         print("=> no checkpoint found at '{}'".format(path))
     return model
+
+def resume_model(resume, model):
+    if os.path.isfile(resume):
+        print("=> loading checkpoint '{}'".format(resume))
+        checkpoint = torch.load(resume)
+
+        # remove top_layer parameters from checkpoint
+        for key in list(checkpoint['state_dict'].keys()):
+            if 'num_batches' in key:
+                del checkpoint['state_dict'][key]
+
+        model.load_state_dict(checkpoint['state_dict'])
+        print("=> loaded checkpoint '{}' (epoch {})"
+                .format(resume, checkpoint['epoch']))
+    else:
+        print("=> no checkpoint found at '{}'".format(resume))
+
+
+def get_argparse():
+    parser = argparse.ArgumentParser(description='PyTorch Implementation of DeepCluster')
+
+    parser.add_argument('data', metavar='DIR', help='path to dataset')
+    parser.add_argument('--arch', '-a', type=str, metavar='ARCH',
+                        choices=['alexnet', 'vgg16', 'resnet18'], default='resnet18',
+                        help='CNN architecture (default: alexnet)')
+    parser.add_argument('--sobel', action='store_true', default=False, help='Sobel filtering')
+    parser.add_argument('--clustering', type=str, choices=['Kmeans', 'PIC'],
+                        default='Kmeans', help='clustering algorithm (default: Kmeans)')
+    parser.add_argument('--nmb_cluster', '--k', type=int, default=1000,
+                        help='number of cluster for k-means (default: 10000)')
+    parser.add_argument('--lr', default=0.05, type=float,
+                        help='learning rate (default: 0.05)')
+    parser.add_argument('--wd', default=-5, type=float,
+                        help='weight decay pow (default: -5)')
+    parser.add_argument('--reassign', type=float, default=1.,
+                        help="""how many epochs of training between two consecutive
+                        reassignments of clusters (default: 1)""")
+    parser.add_argument('--workers', default=10, type=int,
+                        help='number of data loading workers (default: 4)')
+    parser.add_argument('--epochs', type=int, default=200,
+                        help='number of total epochs to run (default: 200)')
+    parser.add_argument('--start_epoch', default=0, type=int,
+                        help='manual epoch number (useful on restarts) (default: 0)')
+    parser.add_argument('--batch', default=256, type=int,
+                        help='mini-batch size (default: 256)')
+    parser.add_argument('--momentum', default=0.9, type=float, help='momentum (default: 0.9)')
+    parser.add_argument('--resume', default='', type=str, metavar='PATH',
+                        help='path to checkpoint (default: None)')
+    parser.add_argument('--expname', default='', type=str, 
+                        help='experiment name')
+    parser.add_argument('--checkpoints', type=int, default=25000,
+                        help='how many iterations between two checkpoints (default: 25000)')
+    parser.add_argument('--seed', type=int, default=31, help='random seed (default: 31)')
+    parser.add_argument('--exp', type=str, default='', help='path to exp folder')
+    parser.add_argument('--verbose', action='store_true', help='chatty')
+
+    parser.add_argument('--traj_enc', type=str, default='bow', help='encoder for trajectory')
+    parser.add_argument('--traj_length', type=int, default=5, help='random seed (default: 31)')
+    parser.add_argument('--ep_length', type=int, default=50, help='random seed (default: 31)')
+    parser.add_argument('--group', type=int, default=1, help='random seed (default: 31)')
+
+    parser.add_argument('--export', type=int, default=0, help='random seed (default: 31)')
+
+    return parser
 
 
 class UnifLabelSampler(Sampler):
