@@ -25,16 +25,16 @@ def make_transform(data_path):
         # data_tensor = torch.from_numpy(np.load(data_path))
         # dataset = TensorDataset(data_tensor)
 
-        if '/data/' in data_path:
-        # preprocessing of data
-            mean = [0.29501004, 0.34140844, 0.3667595 ]
-            std = [0.16179572, 0.1323428 , 0.1213659 ]
+        # if '/data/' in data_path:
+        # # preprocessing of data
+        #     mean = [0.29501004, 0.34140844, 0.3667595 ]
+        #     std = [0.16179572, 0.1323428 , 0.1213659 ]
 
-        elif '/data3/' in data_path:
-            std = [0.12303435, 0.13653513, 0.16653976]
-            mean = [0.4091152 , 0.38996586, 0.35839223]
-        else:
-            assert False, 'which normalization?'
+        # elif '/data3/' in data_path:
+        std = [0.12303435, 0.13653513, 0.16653976]
+        mean = [0.4091152 , 0.38996586, 0.35839223]
+        # else:
+        #     assert False, 'which normalization?'
 
         normalize = transforms.Normalize(mean=mean,
                                         std=std)
@@ -70,7 +70,7 @@ def make_transform(data_path):
 
     return tra, (mean, std), (m1, std1), (normalize, unnormalize)
 
-def unnormalize_batch(batch, m1, s1):
+def unnormalize_batch(batch, m1, s1, inplace=False):
     if 'torch' in str(type(batch)):
         mean = torch.zeros(batch.shape)
         std = torch.zeros(batch.shape)
@@ -87,10 +87,16 @@ def unnormalize_batch(batch, m1, s1):
     std[:, 2, :, :] = s1[2]
     
     # out = batch / 255.0
-    out = batch
-    out = out * std
-    out = out + mean
-    
-    out = out * 255.0
+    if inplace:
+        out = batch
+        out *= std
+        out += mean
+        out *= 255.0
+    else:
+        out = batch
+        out = out * std
+        out += mean
+        out *= 255.0
 
     return out
+

@@ -80,7 +80,11 @@ class ReassignedDataset(data.Dataset):
         # import pdb; pdb.set_trace()
 
         def _sample(path):
-            img = pil_loader(path)
+            if isinstance(path, str):
+                img = pil_loader(path)
+            else:
+                img = path
+            
             if self.transform is not None:
                 img = self.transform(img)
             return img
@@ -93,7 +97,7 @@ class ReassignedDataset(data.Dataset):
         return len(self.imgs)
 
 
-def preprocess_features(npdata, pca=256):
+def preprocess_features(npdata, pca=64, mat=None):
     """Preprocess an array of features.
     Args:
         npdata (np.array N * ndim): features to preprocess
@@ -105,8 +109,10 @@ def preprocess_features(npdata, pca=256):
     npdata =  npdata.astype('float32')
 
     # Apply PCA-whitening with Faiss
-    mat = faiss.PCAMatrix (ndim, pca, eigen_power=-0.5)
-    mat.train(npdata)
+    if mat is None:
+        mat = faiss.PCAMatrix (ndim, pca, eigen_power=-0.5)
+        mat.train(npdata)
+
     assert mat.is_trained
     npdata = mat.apply_py(npdata)
 
@@ -140,7 +146,7 @@ def make_graph(xb, nnn):
     return I, D
 
 
-def cluster_assign(images_lists, dataset, mean, std):
+def cluster_assign(images_lists, dataset, transform):
     """Creates a dataset from clustering, with clusters as labels.
     Args:
         images_lists (list of list): for each cluster, the list of image indexes
@@ -160,18 +166,18 @@ def cluster_assign(images_lists, dataset, mean, std):
     # normalize = transforms.Normalize(mean=[0.29501004, 0.34140844, 0.3667595 ],
     #                                 std=[0.16179572, 0.1323428 , 0.1213659 ])
 
-    normalize = transforms.Normalize(mean=mean, std=std)
+    # normalize = transforms.Normalize(mean=mean, std=std)
 
-    t = transforms.Compose([
-        transforms.Resize([128, 128]),
-        # transforms.RandomResizedCrop(128, scale=(0.8, 0.9), ratio=(1, 1),),
-        # transforms.Lambda(
-        #     # lambda crops: torch.stack([ToTensor()(crop) for crop in crops])
-        #     lambda x: transforms.functional.crop(x, 128/2, 128/4, 128/2, 128/2)
-        # ),
-        transforms.Resize([128, 128]),
-        transforms.ToTensor(),
-        normalize])
+    # t = transforms.Compose([
+    #     transforms.Resize([128, 128]),
+    #     # transforms.RandomResizedCrop(128, scale=(0.8, 0.9), ratio=(1, 1),),
+    #     # transforms.Lambda(
+    #     #     # lambda crops: torch.stack([ToTensor()(crop) for crop in crops])
+    #     #     lambda x: transforms.functional.crop(x, 128/2, 128/4, 128/2, 128/2)
+    #     # ),
+    #     transforms.Resize([128, 128]),
+    #     transforms.ToTensor(),
+    #     normalize])
 
     # normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
     #                                  std=[0.229, 0.224, 0.225])
@@ -180,7 +186,7 @@ def cluster_assign(images_lists, dataset, mean, std):
     #                         transforms.ToTensor(),
     #                         normalize])
 
-    return ReassignedDataset(image_indexes, pseudolabels, dataset, t)
+    return ReassignedDataset(image_indexes, pseudolabels, dataset, transform)
 
 
 def run_kmeans(x, nmb_clusters, verbose=False):
@@ -230,16 +236,69 @@ def arrange_clustering(images_lists):
     indexes = np.argsort(image_indexes)
     return np.asarray(pseudolabels)[indexes]
 
+import sys
+sys.path.append('../')
+sys.path.append('../mixture')
+import mixture as mix
+import mixture.models as mix_models
 
-import mixture.mixture as mix
+class GMM:
+    def __init__(self, k, group=10):
+        self.k = k
+        self.group = group
 
+    def get_clus(self, verbose):
+        clus = mix_models.GaussianMixture(n_components=self.k, covariance_type='full',
+            verbose=verbose, verbose_interval=1, tol=0.01)
+        return clus
+
+    def cluster(self, data, verbose=False):
+        """Performs k-means clustering.
+            Args:
+                x_data (np.array N * dim): data to cluster
+        """
+        end = time.time()
+
+        # PCA-reducing, whitening and L2-normalization
+        xb, self.mat = preprocess_features(data)
+
+        # cluster the data
+        clus = self.get_clus(verbose)
+        clus.fit(xb, group=self.group if self.group > 1 else None)
+
+        clus.centroids = clus.means_
+        D = clus.predict_proba(xb, group=self.group if self.group > 1 else None)
+        
+        # import pdb; pdb.set_trace()
+        loss = clus.score(xb)
+        I, D = D.argmax(axis=1), D.max(axis=1)
+
+        self.clus = clus
+
+        self.images_lists = [[] for i in range(self.k)]
+        self.images_dists = [[] for i in range(self.k)]
+        for i in range(len(data)):
+            self.images_lists[I[i]].append(i)
+            self.images_dists[I[i]].append((i, D[i]))
+
+        if verbose:
+            print('gmm time: {0:.0f} s'.format(time.time() - end))
+
+        return loss
+
+class BGMM(GMM):
+    def get_clus(self):
+        clus = mix_models.BayesianGaussianMixture(n_components=self.k,
+            covariance_type='full', weight_concentration_prior=1e3,
+            weight_concentration_prior_type='dirichlet_process', tol=0.1)
+        return clus
 
 class Kmeans:
     def __init__(self, k, group=10):
         self.k = k
         self.group = group
 
-    def cluster(self, data, verbose=False, mode='kmeans'):
+    def cluster(self, data, verbose=False):
         """Performs k-means clustering.
             Args:
                 x_data (np.array N * dim): data to cluster
@@ -254,25 +313,15 @@ class Kmeans:
         # I, D, loss, self.clus, self.index, self.flat_config = run_kmeans(xb, self.k, verbose)
         # import pdb; pdb.set_trace()
 
-        if mode == 'kmeans':
-            clus = mix.k_means_.KMeans(n_clusters=self.k, n_init=1,
-                precompute_distances=True, max_iter=50,
-                algorithm='full',
-                group=self.group if self.group > 1 else None).fit(xb)
-            D = clus.transform(xb)
-            loss = clus.inertia_
-            clus.centroids = clus.cluster_centers_
-            I, D = D.argmin(axis=1), -D.min(axis=1)
-        else:
-            clus = mix.BayesianGaussianMixture(n_components=self.k, group=self.group if self.group > 1 else None,
-                covariance_type='full',
-                weight_concentration_prior=1e3, weight_concentration_prior_type='dirichlet_process',
-                ).fit(xb)
-            clus.centroids = clus.means_
-            D = clus.predict_proba(xb)
-            # import pdb; pdb.set_trace()
-            loss = clus.score(xb)
-            I, D = D.argmax(axis=1), D.max(axis=1)
+
+        clus = mix_models.k_means_.KMeans(n_clusters=self.k, n_init=1,
+            precompute_distances=True, max_iter=50,
+            algorithm='full',
+            group=self.group if self.group > 1 else None).fit(xb)
+        D = clus.transform(xb)
+        loss = clus.inertia_
+        clus.centroids = clus.cluster_centers_
+        I, D = D.argmin(axis=1), -D.min(axis=1)
 
         self.clus = clus
 

@@ -33,11 +33,11 @@ batch2=256
 traj_enc='bow'
 K=50
 gpu_id=0,1
-length=5
-group=50
+length=1
+group=1
 sobel='--sobel'
-prefix='test_gmm_'
-data='/data3/ajabri/vizdoom/single_env_hard_plain/0'
+prefix='debug_old_gmm_'
+data='/data3/ajabri/vizdoom/single_env_hard_fixed1/0'
 
 for length in $length
 do
@@ -48,7 +48,7 @@ do
     # CUDA_VISIBLE_DEVICES=${gpu_id} python3 main.py $data \
     # --workers 20 $sobel \
     # --batch $batch1 --verbose --exp /tmp/${name} --group ${group} \
-    # --k ${K} --traj_length ${length} --traj_enc ${traj_enc} --epochs 50
+    # --k ${K} --traj_length ${length} --traj_enc ${traj_enc} --epochs 2
 
     CUDA_VISIBLE_DEVICES=${gpu_id} python3 export_clusters.py $data \
     --workers 20 --group ${group} $sobel \

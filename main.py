@@ -36,9 +36,6 @@ import vis_utils
 
 import export_clusters as export
 
-parser = util.get_argparse()
-args = parser.parse_args()
-
 def main(args):
 
     # fix random seeds
@@ -57,7 +54,7 @@ def main(args):
     model.features = torch.nn.DataParallel(model.features)
     model.cuda()
     cudnn.benchmark = True
-
+    
     # create optimizer
     optimizer = torch.optim.SGD(
         filter(lambda x: x.requires_grad, model.parameters()),
@@ -87,8 +84,12 @@ def main(args):
     end = time.time()
 
     tra, (mean, std), (m1, std1), (norm, unnorm) = vis_utils.make_transform(args.data)
+
+    if hasattr(args, 'pretransform'):
+        tra = args.pretransform + tra
+
     dataset = folder.ImageFolder(args.data, transform=transforms.Compose(tra),
-        args=[args.ep_length, args.traj_length])
+        args=[args.ep_length, args.traj_length], samples=None if not hasattr(args, 'samples') else args.samples)
 
     if args.verbose: print('Load dataset: {0:.2f} s'.format(time.time() - end))
 
@@ -103,6 +104,7 @@ def main(args):
     # clustering algorithm to use
     if args.group > 1:
         args.group = args.ep_length - args.traj_length + 1
+    
     deepcluster = clustering.__dict__[args.clustering](args.nmb_cluster, group=args.group)
 
     # training convnet with DeepCluster
@@ -115,26 +117,27 @@ def main(args):
 
         # get the features for the whole dataset
         print('computing features')
-        features, idxs = compute_features(dataloader, model, len(dataset))
+        features, idxs, poses = compute_features(dataloader, model, len(dataset), args)
 
-        idxs = idxs[np.argsort(idxs)]
-        features = features[np.argsort(idxs)]
+        # idxs = idxs[np.argsort(idxs)]
+        assert(all(np.argsort(np.argsort(idxs, kind='stable')) == np.argsort(idxs, kind='stable'))) 
+        # features = features[np.argsort(idxs)]
 
         # cluster the features
         # print('clustering')
         print('clustering')
-        clustering_loss = deepcluster.cluster(features, verbose=args.verbose, mode='gmm')
+        clustering_loss = deepcluster.cluster(features, verbose=args.verbose)
         print('cluster loss', clustering_loss)
 
         # assign pseudo-labels
         print('assign clustering')
         train_dataset = clustering.cluster_assign(
             deepcluster.images_lists,
-            dataset.imgs, mean, std)
+            dataset.imgs, transforms.Compose(tra))
 
         # uniformely sample per target
-        sampler = UnifLabelSampler(int(args.reassign * len(train_dataset)),
-                                   [ll for ll in deepcluster.images_lists if len(ll) > 0])
+        sampler = UnifLabelSampler(int(args.reassign * len(train_dataset)), deepcluster.images_lists)
+                                #    [ll for ll in deepcluster.images_lists if len(ll) > 0])
 
         train_dataloader = torch.utils.data.DataLoader(
             train_dataset,
@@ -155,7 +158,7 @@ def main(args):
 
         # train network with clusters as pseudo-labels
         end = time.time()
-        loss = train(train_dataloader, model, criterion, optimizer, epoch)
+        loss = train(train_dataloader, model, criterion, optimizer, epoch, args)
 
         # print log
         if args.verbose:
@@ -184,11 +187,12 @@ def main(args):
         cluster_log.log(deepcluster.images_lists)
 
     if args.export > 0:
-        export(args, model, dataloader, dataset)
+        clus = export.export(args, model, dataloader, dataset)
+        return model, args, clus
+    
+    return model, args, None
 
-    return model, args, 
-
-def train(loader, model, crit, opt, epoch):
+def train(loader, model, crit, opt, epoch, args):
     """Training of the CNN.
         Args:
             loader (torch.utils.data.DataLoader): Data loader
@@ -222,7 +226,6 @@ def train(loader, model, crit, opt, epoch):
             data_time.update(time.time() - end)
 
             # import pdb; pdb.set_trace() 
-
             # save checkpoint
             n = len(loader) * epoch + i
             if n % args.checkpoints == 0:
@@ -271,31 +274,35 @@ def train(loader, model, crit, opt, epoch):
 
     return losses.avg
 
-def compute_features(dataloader, model, N):
+def compute_features(dataloader, model, N, args):
     if args.verbose:
         print('Compute features')
     batch_time = AverageMeter()
     end = time.time()
     model.eval()
     # discard the label information in the dataloader
-    for i, (input_tensor, idx) in enumerate(dataloader):
+    for i, (input_tensor, idx, pose) in enumerate(dataloader):
         # print(i)
         with torch.no_grad():
             input_var = torch.autograd.Variable(input_tensor.cuda())
 
         aux = model(input_var).data.cpu().numpy()
         idx = idx.data.cpu().numpy()
+        pose = pose.data.cpu().numpy()
 
         if i == 0:
             features = np.zeros((N, aux.shape[1])).astype('float32')
+            poses = np.zeros((N, pose.shape[1])).astype('float32')
             idxs = np.zeros((N)).astype(np.int)
 
         if i < len(dataloader) - 1:
             features[i * args.batch: (i + 1) * args.batch] = aux.astype('float32')
+            poses[i * args.batch: (i + 1) * args.batch] = pose.astype(np.int)            
             idxs[i * args.batch: (i + 1) * args.batch] = idx.astype(np.int)
         else:
             # special treatment for final batch
             features[i * args.batch:] = aux.astype('float32')
+            poses[i * args.batch:] = pose.astype(np.int)            
             idxs[i * args.batch:] = idx.astype(np.int)
 
         # measure elapsed time
@@ -306,8 +313,10 @@ def compute_features(dataloader, model, N):
             print('{0} / {1}\t'
                   'Time: {batch_time.val:.3f} ({batch_time.avg:.3f})'
                   .format(i, len(dataloader), batch_time=batch_time))
-    return features, idxs
+    return features, idxs, poses
 
 
 if __name__ == '__main__':
+    parser = util.get_argparse()
+    args = parser.parse_args()
     main(args)

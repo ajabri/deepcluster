@@ -84,9 +84,11 @@ class DatasetFolder(data.Dataset):
         targets (list): The class_index value for each image in the dataset
     """
 
-    def __init__(self, root, loader, extensions, transform=None, target_transform=None, args=None):
-        classes, class_to_idx = self._find_classes(root)
-        samples = make_dataset(root, class_to_idx, extensions, args=args)
+    def __init__(self, root, loader, extensions, transform=None, target_transform=None, args=None, samples=None):
+        if samples is None:
+            classes, class_to_idx = self._find_classes(root)
+            samples = make_dataset(root, class_to_idx, extensions, args=args)
+
         if len(samples) == 0:
             raise(RuntimeError("Found 0 files in subfolders of: " + root + "\n"
                                "Supported extensions are: " + ",".join(extensions)))
@@ -95,8 +97,9 @@ class DatasetFolder(data.Dataset):
         self.loader = loader
         self.extensions = extensions
 
-        self.classes = classes
-        self.class_to_idx = class_to_idx
+        # self.classes = classes
+        # self.class_to_idx = class_to_idx
+
         self.samples = samples
         self.targets = [s[1] for s in samples]
 
@@ -129,7 +132,12 @@ class DatasetFolder(data.Dataset):
         Returns:
             tuple: (sample, target) where target is class_index of the target class.
         """
-        path, target = self.samples[index]
+        out = self.samples[index]
+        if len(out) == 2:
+            (path, target), pos = out, np.array([0, 0, 0])
+        else:
+            path, target, pos = out
+            
         if self.target_transform is not None:
             target = self.target_transform(target)
 
@@ -137,16 +145,21 @@ class DatasetFolder(data.Dataset):
         # vis = visdom.Visdom(server='http://alan.ist.berkeley.edu', port=8095)
 
         def _sample(path):
-            sample = self.loader(path)
+            if isinstance(path, str):
+                sample = self.loader(path)
+            else:
+                sample = path
+            
             # vis.image(np.array(sample).transpose(2, 0,1))
             if self.transform is not None:
                 sample = self.transform(sample)
 
             return sample
+
         sample = np.stack([_sample(p) for p in path])
 
         
-        return sample, target
+        return sample, target, pos
 
     def __len__(self):
         return len(self.samples)
@@ -210,8 +223,9 @@ class ImageFolder(DatasetFolder):
         imgs (list): List of (image path, class_index) tuples
     """
     def __init__(self, root, transform=None, target_transform=None,
-                 loader=default_loader, args=None):
+                 loader=default_loader, args=None, samples=None):
         super(ImageFolder, self).__init__(root, loader, IMG_EXTENSIONS,
                                           transform=transform,
-                                          target_transform=target_transform, args=args)
+                                          target_transform=target_transform,
+                                          args=args, samples=samples)
         self.imgs = self.samples
