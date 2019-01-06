@@ -109,7 +109,7 @@ def export(args, model, dataloader, dataset):
     model.classifier = nn.Sequential(*list(model.classifier.children())[:-1])
 
     # get the features for the whole dataset
-    features, idxs, poses = compute_features(dataloader, model, len(dataset), args)
+    features = compute_features(dataloader, model, len(dataset), args)
 
     # idxs = idxs[np.argsort(idxs)]
     # features = features[np.argsort(idxs)]
@@ -121,7 +121,7 @@ def export(args, model, dataloader, dataset):
     deepcluster = clustering.__dict__[args.clustering](args.nmb_cluster, group=args.group)
 
     # cluster the features
-    clustering_loss = deepcluster.cluster(features, verbose=args.verbose)
+    clustering_loss = deepcluster.cluster(features, verbose=args.verbose, mode='kmeans')
 
     centroids = deepcluster.clus.centroids
     
@@ -283,43 +283,9 @@ def export(args, model, dataloader, dataset):
 
 
         # ## EXEMPLARS
-        for iii, i in enumerate(ll):
-            # import pdb; pdb.set_trace()
-            imgs = vis_utils.unnormalize_batch(dataset[i][0], mean, std)
-            # vis.images(imgs, opts=dict(title=f"{c} of length {len(l)}"))
-            # vis.images(smoother1(torch.Tensor(imgs)).numpy(), opts=dict(title=f"{c} of length {len(l)}"))
-            # vis.images(smoother2(torch.Tensor(imgs)).numpy(), opts=dict(title=f"{c} of length {len(l)}"))
-            # vis.images(smoother3(torch.Tensor(imgs)).numpy(),  opts=dict(title=f"{c} of length {len(l)}"))
-            # vis.images(smoother4(torch.Tensor(imgs)).numpy(), opts=dict(title=f"{c} of length {len(l)}"))
-
-            # gifname = '%s/%s_%s.gif' % (exp_name, c, i)
-            gifname = '%s_%s.gif' % (c, i)
-            gifpath = '%s/%s' % (out_root, gifname)
-
-            vis_utils.make_gif_from_tensor(imgs.astype(np.uint8), gifpath)
-            e = Element()
-            if iii < num_show // 2:
-                e.addTxt('rank %i<br>' % iii)
-            else:
-                e.addTxt('random<br>')
-
-            e.addImg(gifname, width=128)
-            row.addElement(e)
-
-
-        ## EXEMPLARS
-        # gl = np.array(l).reshape(-1, args.group)
-
-        # for iii, i in enumerate(gl[:3]):
+        # for iii, i in enumerate(ll):
         #     # import pdb; pdb.set_trace()
-        #     # imgs = vis_utils.unnormalize_batch(dataset[i][0], mean, std)
-        #     imgs = np.stack([dataset[_idx][0][0] for _idx in i])
-        #     imgs = vis_utils.unnormalize_batch(imgs, mean, std)
-        #     # import pdb; pdb.set_trace()
-    
-        #     # imgs = vis_utils.unnormalize_batch(dataset[i][0], mean, std)
-
-
+        #     imgs = vis_utils.unnormalize_batch(dataset[i][0], mean, std)
         #     # vis.images(imgs, opts=dict(title=f"{c} of length {len(l)}"))
         #     # vis.images(smoother1(torch.Tensor(imgs)).numpy(), opts=dict(title=f"{c} of length {len(l)}"))
         #     # vis.images(smoother2(torch.Tensor(imgs)).numpy(), opts=dict(title=f"{c} of length {len(l)}"))
@@ -327,7 +293,7 @@ def export(args, model, dataloader, dataset):
         #     # vis.images(smoother4(torch.Tensor(imgs)).numpy(), opts=dict(title=f"{c} of length {len(l)}"))
 
         #     # gifname = '%s/%s_%s.gif' % (exp_name, c, i)
-        #     gifname = '%s_%s.gif' % (c, i[0])
+        #     gifname = '%s_%s.gif' % (c, i)
         #     gifpath = '%s/%s' % (out_root, gifname)
 
         #     vis_utils.make_gif_from_tensor(imgs.astype(np.uint8), gifpath)
@@ -339,6 +305,40 @@ def export(args, model, dataloader, dataset):
 
         #     e.addImg(gifname, width=128)
         #     row.addElement(e)
+
+
+        ## EXEMPLARS
+        gl = np.array(l).reshape(-1, args.group)
+
+        for iii, i in enumerate(gl[:3]):
+            # import pdb; pdb.set_trace()
+            # imgs = vis_utils.unnormalize_batch(dataset[i][0], mean, std)
+            imgs = np.stack([dataset[_idx][0][0] for _idx in i])
+            imgs = vis_utils.unnormalize_batch(imgs, mean, std)
+            # import pdb; pdb.set_trace()
+    
+            # imgs = vis_utils.unnormalize_batch(dataset[i][0], mean, std)
+
+
+            # vis.images(imgs, opts=dict(title=f"{c} of length {len(l)}"))
+            # vis.images(smoother1(torch.Tensor(imgs)).numpy(), opts=dict(title=f"{c} of length {len(l)}"))
+            # vis.images(smoother2(torch.Tensor(imgs)).numpy(), opts=dict(title=f"{c} of length {len(l)}"))
+            # vis.images(smoother3(torch.Tensor(imgs)).numpy(),  opts=dict(title=f"{c} of length {len(l)}"))
+            # vis.images(smoother4(torch.Tensor(imgs)).numpy(), opts=dict(title=f"{c} of length {len(l)}"))
+
+            # gifname = '%s/%s_%s.gif' % (exp_name, c, i)
+            gifname = '%s_%s.gif' % (c, i[0])
+            gifpath = '%s/%s' % (out_root, gifname)
+
+            vis_utils.make_gif_from_tensor(imgs.astype(np.uint8), gifpath)
+            e = Element()
+            if iii < num_show // 2:
+                e.addTxt('rank %i<br>' % iii)
+            else:
+                e.addTxt('random<br>')
+
+            e.addImg(gifname, width=128)
+            row.addElement(e)
 
         table.addRow(row)
 
@@ -392,49 +392,39 @@ def preprocess_features(mat, npdata, pca=256):
     return npdata
     
 def compute_features(dataloader, model, N, args):
-    if args.verbose:
-        print('Compute features')
+    print('Compute features')
     batch_time = AverageMeter()
     end = time.time()
     model.eval()
     # discard the label information in the dataloader
-    for i, (input_tensor, idx, pose) in enumerate(dataloader):
-        # print(i)
+    for i, (input_tensor, _, _) in enumerate(dataloader):
         with torch.no_grad():
             input_var = torch.autograd.Variable(input_tensor.cuda())
 
         aux = model(input_var).data.cpu().numpy()
-        idx = idx.data.cpu().numpy()
-        pose = pose.data.cpu().numpy()
 
         if i == 0:
             features = np.zeros((N, aux.shape[1])).astype('float32')
-            poses = np.zeros((N, pose.shape[1])).astype('float32')
-            idxs = np.zeros((N)).astype(np.int)
 
         if i < len(dataloader) - 1:
             features[i * args.batch: (i + 1) * args.batch] = aux.astype('float32')
-            poses[i * args.batch: (i + 1) * args.batch] = pose.astype(np.int)            
-            idxs[i * args.batch: (i + 1) * args.batch] = idx.astype(np.int)
         else:
             # special treatment for final batch
             features[i * args.batch:] = aux.astype('float32')
-            poses[i * args.batch:] = pose.astype(np.int)            
-            idxs[i * args.batch:] = idx.astype(np.int)
 
         # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
 
-        if args.verbose and (i % 50) == 0:
+        if (i % 200) == 0:
             print('{0} / {1}\t'
-                  'Time: {batch_time.val:.3f} ({batch_time.avg:.3f})'
-                  .format(i, len(dataloader), batch_time=batch_time))
-    return features, idxs, poses
-
+                    'Time: {batch_time.val:.3f} ({batch_time.avg:.3f})'
+                    .format(i, len(dataloader), batch_time=batch_time))
+    return features
 
 
 if __name__ == '__main__':
+
     parser = util.get_argparse()
     args = parser.parse_args()
     main(args)
