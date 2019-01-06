@@ -34,24 +34,26 @@ traj_enc='bow'
 K=50
 gpu_id=0,1
 length=1
-group=1
+group=50
 sobel='--sobel'
-prefix='debug_old2_gmm_'
+prefix='working2_64d'
 data='/data3/ajabri/vizdoom/single_env_hard_fixed1/0'
+clustering='GMM'
 
 for length in $length
 do
     # gpu_id=length-1
-    name=${prefix}_${traj_enc}_T${length}_K${K}_group${group}${sobel}
+    name=${prefix}_${clustering}_${traj_enc}_T${length}_K${K}_group${group}${sobel}
     echo ${name}
 
     # CUDA_VISIBLE_DEVICES=${gpu_id} python3 dc_main.py $data \
     # --workers 20 $sobel \
     # --batch $batch1 --verbose --exp /tmp/${name} --group ${group} \
-    # --k ${K} --traj_length ${length} --traj_enc ${traj_enc} --epochs 2
+    # --k ${K} --traj_length ${length} --traj_enc ${traj_enc} --epochs 10 \
+    # --export 1 --dump-html 1 --clustering ${clustering} #--lr 0.001 
 
     CUDA_VISIBLE_DEVICES=${gpu_id} python3 export_clusters.py $data \
-    --workers 20 --group ${group} $sobel \
+    --workers 20 --group ${group} $sobel --clustering ${clustering} \
     --batch $batch2 --verbose --resume /tmp/${name}/checkpoint.pth.tar \
     --k ${K} --traj_length ${length} --traj_enc ${traj_enc} 
 

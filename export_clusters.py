@@ -9,6 +9,7 @@ import os
 import pickle
 import time
 import debug
+import random
 
 import faiss
 import numpy as np
@@ -25,6 +26,7 @@ from torch.utils.data import TensorDataset
 import folder
 
 import clustering
+import dc_main as dc_main
 import models
 import util
 from util import AverageMeter, Logger, UnifLabelSampler
@@ -35,7 +37,7 @@ sys.path.append('../meta-vizdoom/')
 sys.path.append('../meta-vizdoom/ppo/')
 import env # VizDoom env
 
-sys.path.append('./html/PyHTMLWriter/src')
+sys.path.append('/home/ajabri/clones/deepcluster/html/PyHTMLWriter/src')
 from Element import Element
 from TableRow import TableRow
 from Table import Table
@@ -99,7 +101,7 @@ def main(args):
                                              pin_memory=True)
 
 
-    export(args, model, dataloader, dataset)
+    return export(args, model, dataloader, dataset)
 
 def export(args, model, dataloader, dataset):
 
@@ -109,7 +111,7 @@ def export(args, model, dataloader, dataset):
     model.classifier = nn.Sequential(*list(model.classifier.children())[:-1])
 
     # get the features for the whole dataset
-    features = compute_features(dataloader, model, len(dataset), args)
+    features, idxs, pos1 = dc_main.compute_features(dataloader, model, len(dataset), args)
 
     # idxs = idxs[np.argsort(idxs)]
     # features = features[np.argsort(idxs)]
@@ -121,7 +123,7 @@ def export(args, model, dataloader, dataset):
     deepcluster = clustering.__dict__[args.clustering](args.nmb_cluster, group=args.group)
 
     # cluster the features
-    clustering_loss = deepcluster.cluster(features, verbose=args.verbose, mode='kmeans')
+    clustering_loss = deepcluster.cluster(features, verbose=args.verbose)
 
     centroids = deepcluster.clus.centroids
     
@@ -138,44 +140,43 @@ def export(args, model, dataloader, dataset):
 
     model.features = model.features.module
 
-    c_mean, c_cov, c_var = get_means_and_variances(deepcluster, features)
+    c_mean, c_cov, c_var = get_means_and_variances(deepcluster, features, args)
+    resume = args.resume if len(args.resume) > 0 else args.exp
 
-    if args.export > 0:
-        faiss.write_VectorTransform(deepcluster.mat, resume + '.pca')
-        torch.save({
+    out = {
             'state_dict': model.state_dict(), 'centroids': centroids,
             'pca_path': resume + '.pca',
             'mean': mean, 'std': std,
-            'cluster_mean': c_mean, 'cluster_cov': c_cov
-            },
+            # 'cluster_mean': c_mean, 'cluster_cov': c_cov,
+            'clus': deepcluster.clus,
+            }
+
+    if args.export > 0:
+        faiss.write_VectorTransform(deepcluster.mat, resume + '.pca')
+        torch.save(out,
             resume + '.clus')
+    out['pca'] = deepcluster.mat
 
     T = args.traj_length
-
-    import random
     
-    sorted_lists = sorted(deepcluster.images_dists, key=len)[::-1] 
-    sorted_lists = [s for s in sorted_lists if len(s) > 7]
+    pos = pos1
 
+    if sum(sum(pos)) == 0:
+        meta = torch.load('%s/meta.dict' % args.data)
 
-    meta = torch.load(args.data + '/meta.dict')
-    pos = np.array(meta['pos'])
+        pos = np.array(meta['pos'])
 
-    pos_idx = np.arange(pos.shape[0]*pos.shape[1])
-    pos_idx = pos_idx.reshape(pos.shape[0], pos.shape[1])[:, T-1:]
-    pos_idx = pos_idx.reshape(pos_idx.shape[0] * pos_idx.shape[1])
+        pos_idx = np.arange(pos.shape[0]*pos.shape[1])
+        pos_idx = pos_idx.reshape(pos.shape[0], pos.shape[1])[:, T-1:]
+        pos_idx = pos_idx.reshape(pos_idx.shape[0] * pos_idx.shape[1])
 
-    pos = pos.reshape(pos.shape[0]*pos.shape[1], pos.shape[2])
+        pos = pos.reshape(pos.shape[0]*pos.shape[1], pos.shape[2])
+    else:
+        meta = torch.load('/data3/ajabri/vizdoom/single_env_hard_fixed1/0/meta.dict')
+
+    # import pdb; pdb.set_trace()
 
     sz = 30
-
-    x0, y0 = pos.min(0)[:2]
-    pos -= pos.min(0)[None]
-
-    x1, y1 = pos.max(0)[:2]
-    pos /= pos.max(0)[None]
-
-    pos[:, :2] *= sz - 1e-3
 
     from scipy.ndimage.filters import gaussian_filter
 
@@ -210,12 +211,9 @@ def export(args, model, dataloader, dataset):
     smoother4 = models.mini_models.GaussianSmoothing(3, 9, 7)
 
 
-    if args.expname == '':
-        exp_name = args.resume.split('/')[-2]
-    else:
-        exp_name = args.expname
-
-    out_root = '/home/ajabri/clones/deepcluster-ajabri/html/%s' % exp_name
+    exp_name = args.resume.split('/')[-2] if args.resume != '' else args.exp.split('/')[-1]
+    out_root = '%s/%s' % (args.export_path, exp_name)
+    # out_root = '/home/ajabri/clones/deepcluster-ajabri/html/%s' % exp_name
 
     # import pdb; pdb.set_trace()
     if not os.path.exists(out_root):
@@ -226,7 +224,7 @@ def export(args, model, dataloader, dataset):
     num_show = 8
 
     sorted_variance = np.argsort(c_var)[::-1]
-    
+
     # import pdb; pdb.set_trace()
     
     for c, clus_idx in enumerate(sorted_variance):
@@ -250,24 +248,11 @@ def export(args, model, dataloader, dataset):
         ## MAP
         poo = []
         for t in range(T):
-            poo += [get_mask_from_coord(ppp) for ppp in pos[pos_idx[l] - t]]
-            # po1 = [get_mask_from_coord(ppp) for ppp in pos[pos_idx[l]]]
-            # po2 = [get_mask_from_coord(ppp) for ppp in pos[pos_idx[l]]]
+            poo += [pos[pos_idx[l] - t]]
+        #     # po1 = [get_mask_from_coord(ppp) for ppp in pos[pos_idx[l]]]
+        #     # po2 = [get_mask_from_coord(ppp) for ppp in pos[pos_idx[l]]]
 
-        posum = sum(poo)
-        objs_mask = get_obj_masks(meta['objs'])
-
-        posum /= posum.max()
-
-
-        # import pdb; pdb.set_trace()
-        posum += objs_mask
-        posum = np.clip(posum, a_min=0, a_max=1)
-
-        # posum *= 255.0
-        # vis.image((posum*255.).astype(np.uint8), opts=dict(width=300, height=300))
-        # vis.image(gaussian_filter((posum*255.), sigma=1).astype(np.uint8), opts=dict(width=300, height=300))
-
+        posum = env.make_pose_map(np.concatenate(poo), meta['objs'][0], sz=sz)
 
         # gifname = '%s/%s_%s.png' % (exp_name, c, 'map')
         gifname = '%s_%s.png' % (c, 'map')
@@ -282,17 +267,10 @@ def export(args, model, dataloader, dataset):
         row.addElement(e)
 
 
-        # ## EXEMPLARS
+        ## EXEMPLARS
         # for iii, i in enumerate(ll):
-        #     # import pdb; pdb.set_trace()
         #     imgs = vis_utils.unnormalize_batch(dataset[i][0], mean, std)
-        #     # vis.images(imgs, opts=dict(title=f"{c} of length {len(l)}"))
-        #     # vis.images(smoother1(torch.Tensor(imgs)).numpy(), opts=dict(title=f"{c} of length {len(l)}"))
-        #     # vis.images(smoother2(torch.Tensor(imgs)).numpy(), opts=dict(title=f"{c} of length {len(l)}"))
-        #     # vis.images(smoother3(torch.Tensor(imgs)).numpy(),  opts=dict(title=f"{c} of length {len(l)}"))
-        #     # vis.images(smoother4(torch.Tensor(imgs)).numpy(), opts=dict(title=f"{c} of length {len(l)}"))
 
-        #     # gifname = '%s/%s_%s.gif' % (exp_name, c, i)
         #     gifname = '%s_%s.gif' % (c, i)
         #     gifpath = '%s/%s' % (out_root, gifname)
 
@@ -306,58 +284,42 @@ def export(args, model, dataloader, dataset):
         #     e.addImg(gifname, width=128)
         #     row.addElement(e)
 
-
-        ## EXEMPLARS
+        # EXEMPLARS
         gl = np.array(l).reshape(-1, args.group)
+        if args.group > 10:
+            exemplars = gl[random.sample(list(range(gl.shape[0])), 3)]
+        else:
+            exemplars = gl[random.sample(list(range(gl.shape[0])), 10)]
 
-        for iii, i in enumerate(gl[:3]):
-            # import pdb; pdb.set_trace()
-            # imgs = vis_utils.unnormalize_batch(dataset[i][0], mean, std)
+        for iii, i in enumerate(exemplars):
             imgs = np.stack([dataset[_idx][0][0] for _idx in i])
             imgs = vis_utils.unnormalize_batch(imgs, mean, std)
-            # import pdb; pdb.set_trace()
-    
-            # imgs = vis_utils.unnormalize_batch(dataset[i][0], mean, std)
 
-
-            # vis.images(imgs, opts=dict(title=f"{c} of length {len(l)}"))
-            # vis.images(smoother1(torch.Tensor(imgs)).numpy(), opts=dict(title=f"{c} of length {len(l)}"))
-            # vis.images(smoother2(torch.Tensor(imgs)).numpy(), opts=dict(title=f"{c} of length {len(l)}"))
-            # vis.images(smoother3(torch.Tensor(imgs)).numpy(),  opts=dict(title=f"{c} of length {len(l)}"))
-            # vis.images(smoother4(torch.Tensor(imgs)).numpy(), opts=dict(title=f"{c} of length {len(l)}"))
-
-            # gifname = '%s/%s_%s.gif' % (exp_name, c, i)
             gifname = '%s_%s.gif' % (c, i[0])
             gifpath = '%s/%s' % (out_root, gifname)
 
             vis_utils.make_gif_from_tensor(imgs.astype(np.uint8), gifpath)
             e = Element()
-            if iii < num_show // 2:
-                e.addTxt('rank %i<br>' % iii)
-            else:
-                e.addTxt('random<br>')
-
             e.addImg(gifname, width=128)
             row.addElement(e)
 
         table.addRow(row)
 
-        # vis.text('', opts=dict(width=10000, height=2))
-        if (c+1) % 10 == 0:
-            # import pdb; pdb.set_trace()
-            tw = TableWriter(table, '/home/ajabri/clones/deepcluster-ajabri/html/%s' % exp_name, rowsPerPage=min(args.nmb_cluster,100))
-            tw.write()
+        # # vis.text('', opts=dict(width=10000, height=2))
+        # if (c+1) % 10 == 0:
+        #     # import pdb; pdb.set_trace()
+    tw = TableWriter(table, '/home/ajabri/clones/deepcluster-ajabri/html/%s' % exp_name, rowsPerPage=min(args.nmb_cluster,100))
+    tw.write()
 
     # import pdb; pdb.set_trace()
 
 
-
-def get_means_and_variances(dc, features):
+def get_means_and_variances(dc, features, args):
     m = []
     cv = []
     v = []
     for i in range(args.nmb_cluster):
-        feats = preprocess_features(dc.mat, features[dc.images_lists[i]])
+        feats, _ = clustering.preprocess_features(features[dc.images_lists[i]], mat=dc.mat)
         mm = feats.mean(0)
         xx = feats - mm
 
@@ -368,59 +330,6 @@ def get_means_and_variances(dc, features):
         v.append((((xx)**2).sum(-1) ** 0.5).mean())
 
     return m, cv, v
-
-def preprocess_features(mat, npdata, pca=256):
-    """Preprocess an array of features.
-    Args:
-        npdata (np.array N * ndim): features to preprocess
-        pca (int): dim of output
-    Returns:
-        np.array of dim N * pca: data PCA-reduced, whitened and L2-normalized
-    """
-
-    _, ndim = npdata.shape
-    npdata =  npdata.astype('float32')
-
-    # Apply PCA-whitening with Faiss
-    assert mat.is_trained
-    npdata = mat.apply_py(npdata)
-
-    # L2 normalization
-    row_sums = np.linalg.norm(npdata, axis=1)
-    npdata = npdata / row_sums[:, np.newaxis]
-
-    return npdata
-    
-def compute_features(dataloader, model, N, args):
-    print('Compute features')
-    batch_time = AverageMeter()
-    end = time.time()
-    model.eval()
-    # discard the label information in the dataloader
-    for i, (input_tensor, _, _) in enumerate(dataloader):
-        with torch.no_grad():
-            input_var = torch.autograd.Variable(input_tensor.cuda())
-
-        aux = model(input_var).data.cpu().numpy()
-
-        if i == 0:
-            features = np.zeros((N, aux.shape[1])).astype('float32')
-
-        if i < len(dataloader) - 1:
-            features[i * args.batch: (i + 1) * args.batch] = aux.astype('float32')
-        else:
-            # special treatment for final batch
-            features[i * args.batch:] = aux.astype('float32')
-
-        # measure elapsed time
-        batch_time.update(time.time() - end)
-        end = time.time()
-
-        if (i % 200) == 0:
-            print('{0} / {1}\t'
-                    'Time: {batch_time.val:.3f} ({batch_time.avg:.3f})'
-                    .format(i, len(dataloader), batch_time=batch_time))
-    return features
 
 
 if __name__ == '__main__':

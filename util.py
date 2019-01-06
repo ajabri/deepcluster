@@ -11,40 +11,40 @@ import numpy as np
 import torch
 from torch.utils.data.sampler import Sampler
 
-import models
+# import models
 
 import argparse
 
-def load_model(path):
-    """Loads model and return it without DataParallel table."""
-    if os.path.isfile(path):
-        print("=> loading checkpoint '{}'".format(path))
-        checkpoint = torch.load(path)
+# def load_model(path):
+#     """Loads model and return it without DataParallel table."""
+#     if os.path.isfile(path):
+#         print("=> loading checkpoint '{}'".format(path))
+#         checkpoint = torch.load(path)
 
-        # size of the top layer
-        N = checkpoint['state_dict']['top_layer.bias'].size()
+#         # size of the top layer
+#         N = checkpoint['state_dict']['top_layer.bias'].size()
 
-        # build skeleton of the model
-        sob = 'sobel.0.weight' in checkpoint['state_dict'].keys()
-        model = models.__dict__[checkpoint['arch']](sobel=sob, out=int(N[0]))
+#         # build skeleton of the model
+#         sob = 'sobel.0.weight' in checkpoint['state_dict'].keys()
+#         model = models.__dict__[checkpoint['arch']](sobel=sob, out=int(N[0]))
 
-        # deal with a dataparallel table
-        def rename_key(key):
-            if not 'module' in key:
-                return key
-            return ''.join(key.split('.module'))
+#         # deal with a dataparallel table
+#         def rename_key(key):
+#             if not 'module' in key:
+#                 return key
+#             return ''.join(key.split('.module'))
 
-        checkpoint['state_dict'] = {rename_key(key): val
-                                    for key, val
-                                    in checkpoint['state_dict'].items()}
+#         checkpoint['state_dict'] = {rename_key(key): val
+#                                     for key, val
+#                                     in checkpoint['state_dict'].items()}
 
-        # load weights
-        model.load_state_dict(checkpoint['state_dict'])
-        print("Loaded")
-    else:
-        model = None
-        print("=> no checkpoint found at '{}'".format(path))
-    return model
+#         # load weights
+#         model.load_state_dict(checkpoint['state_dict'])
+#         print("Loaded")
+#     else:
+#         model = None
+#         print("=> no checkpoint found at '{}'".format(path))
+#     return model
 
 def resume_model(resume, model):
     if os.path.isfile(resume):
@@ -71,7 +71,7 @@ def get_argparse():
                         choices=['alexnet', 'vgg16', 'resnet18'], default='resnet18',
                         help='CNN architecture (default: alexnet)')
     parser.add_argument('--sobel', action='store_true', default=False, help='Sobel filtering')
-    parser.add_argument('--clustering', type=str, choices=['Kmeans', 'PIC'],
+    parser.add_argument('--clustering', type=str, choices=['GMM', 'BGMM', 'Kmeans', 'PIC'],
                         default='Kmeans', help='clustering algorithm (default: Kmeans)')
     parser.add_argument('--nmb_cluster', '--k', type=int, default=1000,
                         help='number of cluster for k-means (default: 10000)')
@@ -107,6 +107,8 @@ def get_argparse():
     parser.add_argument('--group', type=int, default=1, help='random seed (default: 31)')
 
     parser.add_argument('--export', type=int, default=0, help='random seed (default: 31)')
+    parser.add_argument('--export-path', type=str, default='/home/ajabri/clones/deepcluster-ajabri/html/')
+    parser.add_argument('--dump-html', type=int, default=0, help='dump html visualization')
 
     return parser
 
@@ -124,14 +126,17 @@ class UnifLabelSampler(Sampler):
         self.indexes = self.generate_indexes_epoch()
 
     def generate_indexes_epoch(self):
-        size_per_pseudolabel = int(self.N / len(self.images_lists)) + 1
-        res = np.zeros(size_per_pseudolabel * len(self.images_lists))
+        nonzero_clusters = [ll for ll in self.images_lists if len(ll) > 0]
+        nonzero_idxs = [i for i,_ in enumerate(self.images_lists) if len(_) > 0]
 
-        for i in range(len(self.images_lists)):
+        size_per_pseudolabel = int(self.N / len(nonzero_clusters)) + 1
+        res = np.zeros(size_per_pseudolabel * len(nonzero_clusters))
+
+        for i,idx in enumerate(nonzero_idxs):
             indexes = np.random.choice(
-                self.images_lists[i],
+                self.images_lists[idx],
                 size_per_pseudolabel,
-                replace=(len(self.images_lists[i]) <= size_per_pseudolabel)
+                replace=(len(self.images_lists[idx]) <= size_per_pseudolabel)
             )
             res[i * size_per_pseudolabel: (i + 1) * size_per_pseudolabel] = indexes
 
