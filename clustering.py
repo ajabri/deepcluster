@@ -243,16 +243,24 @@ import mixture as mix
 import mixture.models as mix_models
 
 class GMM:
-    def __init__(self, k, group=10):
+    def __init__(self, k, group=10, reg_covar=1e-4, clus=None, verbose=None):
         self.k = k
         self.group = group
+        self.reg_covar = reg_covar
+        self.verbose = verbose
 
-    def get_clus(self, verbose):
-        clus = mix_models.GaussianMixture(n_components=self.k, covariance_type='full',
-            verbose=verbose, verbose_interval=1, tol=0.01)
+        if clus is None:
+            self.clus = self.get_clus()
+        else:
+            self.clus = clus
+            self.clus.warm_start = True
+
+    def get_clus(self):
+        clus = mix_models.GaussianMixture(n_components=self.k, covariance_type='full', n_init=3,
+            verbose=self.verbose, verbose_interval=1, tol=0.01, reg_covar=self.reg_covar)
         return clus
 
-    def cluster(self, data, verbose=False):
+    def cluster(self, data, group_transform=True):
         """Performs k-means clustering.
             Args:
                 x_data (np.array N * dim): data to cluster
@@ -263,17 +271,19 @@ class GMM:
         xb, self.mat = preprocess_features(data)
 
         # cluster the data
-        clus = self.get_clus(verbose)
-        clus.fit(xb, group=self.group if self.group > 1 else None)
+        self.clus.fit(xb, group=self.group if self.group > 1 else None)
 
-        clus.centroids = clus.means_
-        D = clus.predict_proba(xb, group=self.group if self.group > 1 else None)
-        
+        self.clus.centroids = self.clus.means_
+
         # import pdb; pdb.set_trace()
-        loss = clus.score(xb)
+        
+        if group_transform:
+            D = self.clus.predict_proba(xb, group=self.group if self.group > 1 else None)
+        else:
+            D = self.clus.predict_proba(xb, group=1)
+        
+        loss = self.clus.score(xb)
         I, D = D.argmax(axis=1), D.max(axis=1)
-
-        self.clus = clus
 
         self.images_lists = [[] for i in range(self.k)]
         self.images_dists = [[] for i in range(self.k)]
@@ -281,24 +291,37 @@ class GMM:
             self.images_lists[I[i]].append(i)
             self.images_dists[I[i]].append((i, D[i]))
 
-        if verbose:
+        if self.verbose:
             print('gmm time: {0:.0f} s'.format(time.time() - end))
 
         return loss
 
 class BGMM(GMM):
     def get_clus(self):
-        clus = mix_models.BayesianGaussianMixture(n_components=self.k,
-            covariance_type='full', weight_concentration_prior=1e3,
-            weight_concentration_prior_type='dirichlet_process', tol=0.1)
+        clus = mix_models.BayesianGaussianMixture(n_components=self.k, n_init=3,
+            covariance_type='full', weight_concentration_prior=1e5, reg_covar=self.reg_covar,
+            verbose=self.verbose, weight_concentration_prior_type='dirichlet_distribution', tol=0.1)
         return clus
 
 class Kmeans:
-    def __init__(self, k, group=10):
+    def get_clus(self):
+        clus = mix_models.k_means_.KMeans(n_clusters=self.k, n_init=3,
+            precompute_distances=True, max_iter=50, verbose=self.verbose,
+            algorithm='full')
+        return clus
+
+    def __init__(self, k, group=10, reg_covar=None, clus=None, verbose=False):
         self.k = k
         self.group = group
+        self.verbose = verbose
 
-    def cluster(self, data, verbose=False):
+        if clus is None:
+            self.clus = self.get_clus()
+        else:
+            self.clus = clus
+            self.clus.init = self.clus.cluster_centers_
+
+    def cluster(self, data, group_transform=False):
         """Performs k-means clustering.
             Args:
                 x_data (np.array N * dim): data to cluster
@@ -313,31 +336,24 @@ class Kmeans:
         # I, D, loss, self.clus, self.index, self.flat_config = run_kmeans(xb, self.k, verbose)
         # import pdb; pdb.set_trace()
 
+        self.clus.fit(xb, group=self.group if self.group > 1 else None)
 
-        clus = mix_models.k_means_.KMeans(n_clusters=self.k, n_init=1,
-            precompute_distances=True, max_iter=50,
-            algorithm='full',
-            group=self.group if self.group > 1 else None).fit(xb)
-        D = clus.transform(xb)
-        loss = clus.inertia_
-        clus.centroids = clus.cluster_centers_
+        if group_transform:
+            D = self.clus.transform(xb, group=self.group if self.group > 1 else None)
+        else:
+            D = self.clus.transform(xb, group=1)
+
+        loss = self.clus.inertia_
+        self.clus.centroids = self.clus.cluster_centers_
         I, D = D.argmin(axis=1), -D.min(axis=1)
 
-        self.clus = clus
-
-        # import pdb; pdb.set_trace()
-        # clus = kmeans.KMeans(n_clusters=self.n_components, n_init=1,
-        #                            random_state=random_state, algorithm='full',
-        #                            group=self.group).fit(xb)
-                                   
-        
         self.images_lists = [[] for i in range(self.k)]
         self.images_dists = [[] for i in range(self.k)]
         for i in range(len(data)):
             self.images_lists[I[i]].append(i)
             self.images_dists[I[i]].append((i, D[i]))
 
-        if verbose:
+        if self.verbose:
             print('k-means time: {0:.0f} s'.format(time.time() - end))
 
         return loss

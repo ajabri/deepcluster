@@ -71,8 +71,12 @@ def get_argparse():
                         choices=['alexnet', 'vgg16', 'resnet18'], default='resnet18',
                         help='CNN architecture (default: alexnet)')
     parser.add_argument('--sobel', action='store_true', default=False, help='Sobel filtering')
+
     parser.add_argument('--clustering', type=str, choices=['GMM', 'BGMM', 'Kmeans', 'PIC'],
                         default='Kmeans', help='clustering algorithm (default: Kmeans)')
+    parser.add_argument('--clustering_export', type=str, choices=['GMM', 'BGMM', 'Kmeans', 'PIC'],
+                        default='', help='clustering algorithm for exported model (default: Kmeans)')
+
     parser.add_argument('--nmb_cluster', '--k', type=int, default=1000,
                         help='number of cluster for k-means (default: 10000)')
     parser.add_argument('--lr', default=0.05, type=float,
@@ -105,9 +109,11 @@ def get_argparse():
     parser.add_argument('--traj_length', type=int, default=5, help='random seed (default: 31)')
     parser.add_argument('--ep_length', type=int, default=50, help='random seed (default: 31)')
     parser.add_argument('--group', type=int, default=1, help='random seed (default: 31)')
+    parser.add_argument('--group_transform', type=int, default=1, help='random seed (default: 31)')
+    parser.add_argument('--reg_covar', type=float, default=0.0001, help='regularize covariance matrices')
 
     parser.add_argument('--export', type=int, default=0, help='random seed (default: 31)')
-    parser.add_argument('--export-path', type=str, default='/home/ajabri/clones/deepcluster-ajabri/html/')
+    parser.add_argument('--export-path', type=str, default='/data3/ajabri/html/')
     parser.add_argument('--dump-html', type=int, default=0, help='dump html visualization')
 
     return parser

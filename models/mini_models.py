@@ -297,6 +297,8 @@ class ResNet(nn.Module):
         )
 
         fcdim = 1024 if sum(layers) > 8 else 512
+        self.fcdim = fcdim
+        
         self.avgpool = nn.AvgPool2d(2, 2)
 
         self.tc = TCBlock(fcdim, 8, 32)

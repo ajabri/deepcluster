@@ -36,26 +36,29 @@ gpu_id=0,1
 length=1
 group=50
 sobel='--sobel'
-prefix='working2_64d'
+prefix='kmeans+bgmm_bigpen_mod-e_'
 data='/data3/ajabri/vizdoom/single_env_hard_fixed1/0'
-clustering='GMM'
+clustering='Kmeans'
+clustering2='BGMM'
+# clustering_export='BMM'
+reg_cov=0.001
 
 for length in $length
 do
     # gpu_id=length-1
-    name=${prefix}_${clustering}_${traj_enc}_T${length}_K${K}_group${group}${sobel}
+    name=${prefix}_${clustering}_${traj_enc}_T${length}_K${K}_group${group}${sobel}_regcov${reg_cov}
     echo ${name}
 
-    # CUDA_VISIBLE_DEVICES=${gpu_id} python3 dc_main.py $data \
-    # --workers 20 $sobel \
-    # --batch $batch1 --verbose --exp /tmp/${name} --group ${group} \
-    # --k ${K} --traj_length ${length} --traj_enc ${traj_enc} --epochs 10 \
-    # --export 1 --dump-html 1 --clustering ${clustering} #--lr 0.001 
+    CUDA_VISIBLE_DEVICES=${gpu_id} python3 dc_main.py $data \
+    --workers 20 $sobel \
+    --batch $batch1 --verbose --exp /tmp/${name} --group ${group} \
+    --k ${K} --traj_length ${length} --traj_enc ${traj_enc} --epochs 10 \
+    --export 0 --dump-html 0 --clustering ${clustering} --reg_covar ${reg_cov} #--lr 0.001 
 
     CUDA_VISIBLE_DEVICES=${gpu_id} python3 export_clusters.py $data \
-    --workers 20 --group ${group} $sobel --clustering ${clustering} \
+    --workers 20 --group ${group} $sobel --clustering ${clustering2} \
     --batch $batch2 --verbose --resume /tmp/${name}/checkpoint.pth.tar \
-    --k ${K} --traj_length ${length} --traj_enc ${traj_enc} 
+    --k ${K} --traj_length ${length} --traj_enc ${traj_enc} --reg_covar ${reg_cov}
 
     # exit
 done

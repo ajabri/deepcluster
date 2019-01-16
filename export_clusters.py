@@ -115,15 +115,25 @@ def export(args, model, dataloader, dataset):
 
     # idxs = idxs[np.argsort(idxs)]
     # features = features[np.argsort(idxs)]
-    
+
+    assert all([all(row[0] == row) for row in idxs.reshape(-1, args.group)])
+
     if args.group > 1:
         args.group = args.ep_length - args.traj_length + 1
 
+    if args.clustering_export == '':
+        args.clustering_export = args.clustering
+
+    clus_resume = None
+    if hasattr(args, 'clus_resume'):
+        clus_resume = args.clus_resume
+
     # clustering algorithm to use
-    deepcluster = clustering.__dict__[args.clustering](args.nmb_cluster, group=args.group)
+    deepcluster = clustering.__dict__[args.clustering_export](args.nmb_cluster, group=args.group,
+        reg_covar=args.reg_covar, clus=clus_resume, verbose=args.verbose)
 
     # cluster the features
-    clustering_loss = deepcluster.cluster(features, verbose=args.verbose)
+    clustering_loss = deepcluster.cluster(features, group_transform=args.group_transform>0)
 
     centroids = deepcluster.clus.centroids
     
@@ -173,35 +183,13 @@ def export(args, model, dataloader, dataset):
         pos = pos.reshape(pos.shape[0]*pos.shape[1], pos.shape[2])
     else:
         meta = torch.load('/data3/ajabri/vizdoom/single_env_hard_fixed1/0/meta.dict')
+        pos_idx = np.arange(pos.shape[0])
 
     # import pdb; pdb.set_trace()
 
     sz = 30
 
     from scipy.ndimage.filters import gaussian_filter
-
-    def get_obj_masks(objs):
-        out = np.zeros((3, sz, sz))
-        for o in objs[0]:
-            # import pdb; pdb.set_trace()
-            x, y = o
-            x, y = int((x - x0)/x1 *sz), int((y-y0)/y1 * sz)
-            out[:, x:x+1, y:y+1] = 1
-
-        return out        
-
-    def get_mask_from_coord(coord):
-        import matplotlib.cm as cm
-
-        x, y, a = coord
-        x, y = int(x), int(y)
-        out = np.zeros((3, sz, sz))
-        out[:, x, y] = cm.jet(a)[:3]
-
-        return out
-
-    # import pdb; pdb.set_trace()
-
     # sorted_self_dists = np.argsort(self_dists[0][:, 1])[::-1]
     # sorted_self_dists = np.argsort(self_dists[0].sum(axis=-1))[::-1]
     
@@ -213,7 +201,6 @@ def export(args, model, dataloader, dataset):
 
     exp_name = args.resume.split('/')[-2] if args.resume != '' else args.exp.split('/')[-1]
     out_root = '%s/%s' % (args.export_path, exp_name)
-    # out_root = '/home/ajabri/clones/deepcluster-ajabri/html/%s' % exp_name
 
     # import pdb; pdb.set_trace()
     if not os.path.exists(out_root):
@@ -230,7 +217,10 @@ def export(args, model, dataloader, dataset):
     for c, clus_idx in enumerate(sorted_variance):
     # for c, clus_idx in enumerate(sorted_self_dists):
         l = deepcluster.images_dists[clus_idx]
-        
+
+        if len(l) == 0:
+            continue
+
         # ll = random.sample(l, min(8, len(l)))
         ll = [ii[0] for ii in sorted(l, key=lambda x: x[1])[::-1]][:num_show//2]
         ll += [ii[0] for ii in random.sample(l, min(num_show//2, len(l)))]
@@ -265,53 +255,53 @@ def export(args, model, dataloader, dataset):
         e = Element()
         e.addImg(gifname, width=180)
         row.addElement(e)
-
-
+        
         ## EXEMPLARS
-        # for iii, i in enumerate(ll):
-        #     imgs = vis_utils.unnormalize_batch(dataset[i][0], mean, std)
+        if not args.group_transform > 0:
+            for iii, i in enumerate(ll):
+                imgs = vis_utils.unnormalize_batch(dataset[i][0], mean, std)
 
-        #     gifname = '%s_%s.gif' % (c, i)
-        #     gifpath = '%s/%s' % (out_root, gifname)
+                gifname = '%s_%s.gif' % (c, i)
+                gifpath = '%s/%s' % (out_root, gifname)
 
-        #     vis_utils.make_gif_from_tensor(imgs.astype(np.uint8), gifpath)
-        #     e = Element()
-        #     if iii < num_show // 2:
-        #         e.addTxt('rank %i<br>' % iii)
-        #     else:
-        #         e.addTxt('random<br>')
+                vis_utils.make_gif_from_tensor(imgs.astype(np.uint8), gifpath)
+                e = Element()
+                if iii < num_show // 2:
+                    e.addTxt('rank %i<br>' % iii)
+                else:
+                    e.addTxt('random<br>')
 
-        #     e.addImg(gifname, width=128)
-        #     row.addElement(e)
-
-        # EXEMPLARS
-        gl = np.array(l).reshape(-1, args.group)
-        if args.group > 10:
-            exemplars = gl[random.sample(list(range(gl.shape[0])), 3)]
+                e.addImg(gifname, width=128)
+                row.addElement(e)
         else:
-            exemplars = gl[random.sample(list(range(gl.shape[0])), 10)]
+            gl = np.array(l).reshape(-1, args.group)
+            if args.group > 10:
+                exemplars = gl[random.sample(list(range(gl.shape[0])), min(gl.shape[0], 3))]
+            else:
+                exemplars = gl[random.sample(list(range(gl.shape[0])), min(gl.shape[0], 10))]
 
-        for iii, i in enumerate(exemplars):
-            imgs = np.stack([dataset[_idx][0][0] for _idx in i])
-            imgs = vis_utils.unnormalize_batch(imgs, mean, std)
+            for iii, i in enumerate(exemplars):
+                imgs = np.stack([dataset[_idx][0][0] for _idx in i])
+                imgs = vis_utils.unnormalize_batch(imgs, mean, std)
 
-            gifname = '%s_%s.gif' % (c, i[0])
-            gifpath = '%s/%s' % (out_root, gifname)
+                gifname = '%s_%s.gif' % (c, i[0])
+                gifpath = '%s/%s' % (out_root, gifname)
 
-            vis_utils.make_gif_from_tensor(imgs.astype(np.uint8), gifpath)
-            e = Element()
-            e.addImg(gifname, width=128)
-            row.addElement(e)
+                vis_utils.make_gif_from_tensor(imgs.astype(np.uint8), gifpath)
+                e = Element()
+                e.addImg(gifname, width=128)
+                row.addElement(e)
 
         table.addRow(row)
 
         # # vis.text('', opts=dict(width=10000, height=2))
         # if (c+1) % 10 == 0:
         #     # import pdb; pdb.set_trace()
-    tw = TableWriter(table, '/home/ajabri/clones/deepcluster-ajabri/html/%s' % exp_name, rowsPerPage=min(args.nmb_cluster,100))
+    tw = TableWriter(table, '%s/%s' % (args.export_path, exp_name), rowsPerPage=min(args.nmb_cluster,100))
     tw.write()
 
     # import pdb; pdb.set_trace()
+    return out
 
 
 def get_means_and_variances(dc, features, args):

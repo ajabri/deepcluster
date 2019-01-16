@@ -46,9 +46,14 @@ def main(args):
     # CNN
     if args.verbose:
         print('Architecture: {}'.format(args.arch))
-    
-    model = models.__dict__[args.arch](sobel=args.sobel, traj_enc=args.traj_enc)
-    fd = int(model.top_layer.weight.size()[1])
+
+    model = None
+    if hasattr(args, 'model_resume'):
+        model = args.model_resume
+        fd = model.fcdim
+    else:    
+        model = models.__dict__[args.arch](sobel=args.sobel, traj_enc=args.traj_enc)
+        fd = int(model.top_layer.weight.size()[1])
     
     model.top_layer = None
     model.features = torch.nn.DataParallel(model.features)
@@ -105,7 +110,7 @@ def main(args):
     if args.group > 1:
         args.group = args.ep_length - args.traj_length + 1
     
-    deepcluster = clustering.__dict__[args.clustering](args.nmb_cluster, group=args.group)
+    deepcluster = clustering.__dict__[args.clustering](args.nmb_cluster, group=args.group, reg_covar=args.reg_covar, verbose=args.verbose)
 
     # training convnet with DeepCluster
     for epoch in range(args.start_epoch, args.epochs):
@@ -119,14 +124,15 @@ def main(args):
         print('computing features')
         features, idxs, poses = compute_features(dataloader, model, len(dataset), args)
 
+        assert all([all(row[0] == row) for row in idxs.reshape(-1, args.group)])
         # idxs = idxs[np.argsort(idxs)]
-        assert(all(np.argsort(np.argsort(idxs, kind='stable')) == np.argsort(idxs, kind='stable'))) 
+        # assert(all(np.argsort(np.argsort(idxs, kind='stable')) == np.argsort(idxs, kind='stable'))) 
         # features = features[np.argsort(idxs)]
 
         # cluster the features
         # print('clustering')
         print('clustering')
-        clustering_loss = deepcluster.cluster(features, verbose=args.verbose)
+        clustering_loss = deepcluster.cluster(features, group_transform=args.group_transform>0)
         print('cluster loss', clustering_loss)
 
         # assign pseudo-labels
@@ -141,7 +147,7 @@ def main(args):
 
         train_dataloader = torch.utils.data.DataLoader(
             train_dataset,
-            batch_size=int(args.batch),
+            batch_size=int(args.batch / 2),
             num_workers=args.workers,
             sampler=sampler,
             pin_memory=True,

@@ -41,7 +41,8 @@ def make_dataset(dir, class_to_idx, extensions, N=100000, args=None):
         if args is not None:
             stride, length = args
         else:
-            stride, length = 50, 8
+            # stride, length = 50, 8
+            assert 'missing ep/traj length args'
 
         for root, _, fnames in sorted(os.walk(d)):
             for idx, fname in enumerate(sorted(fnames, key=lambda x: int(x.split('.')[0]))):
