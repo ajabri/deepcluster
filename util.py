@@ -113,7 +113,8 @@ def get_argparse():
     parser.add_argument('--reg_covar', type=float, default=0.0001, help='regularize covariance matrices')
 
     parser.add_argument('--export', type=int, default=0, help='random seed (default: 31)')
-    parser.add_argument('--export-path', type=str, default='/data3/ajabri/html/')
+    parser.add_argument('--export-path', type=str, default='/data3/ajabri/html2/')
+    parser.add_argument('--log-path', type=str, default='/data3/ajabri/deepcluster/logs/')
     parser.add_argument('--dump-html', type=int, default=0, help='dump html visualization')
 
     return parser
