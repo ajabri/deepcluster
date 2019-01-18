@@ -276,10 +276,10 @@ class ResNet(nn.Module):
             self.bn1 = nn.BatchNorm2d(64)
             self.relu = nn.ReLU(inplace=True)
             self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-            self.layer1 = self._make_layer(block, 64, layers[0])
-            self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
-            self.layer3 = self._make_layer(block, 128, layers[2], stride=2)
-            self.layer4 = self._make_layer(block, 128, layers[3], stride=2)
+            self.layer1 = self._make_layer(block, 64, layers[0], stride=2)
+            self.layer2 = self._make_layer(block, 64, layers[1], stride=2)
+            self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
+            self.layer4 = self._make_layer(block, 64, layers[3], stride=2)
         else:
             self.conv1 = nn.Conv2d(
                 n_inp_chan, 64, kernel_size=5, stride=2, padding=2, bias=False)
@@ -293,10 +293,10 @@ class ResNet(nn.Module):
 
         self.features = nn.Sequential(
             self.conv1, self.bn1, self.relu, self.maxpool,
-            self.layer1, self.layer2, self.layer3, self.layer4
+            self.layer1, self.layer2, self.layer3 #, self.layer4
         )
 
-        fcdim = 1024 if sum(layers) > 8 else 512
+        fcdim = 256
         self.fcdim = fcdim
         
         self.avgpool = nn.AvgPool2d(2, 2)
