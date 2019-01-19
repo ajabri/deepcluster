@@ -269,6 +269,7 @@ class GMM:
 
         # PCA-reducing, whitening and L2-normalization
         xb, self.mat = preprocess_features(data)
+        xb = data
 
         # cluster the data
         self.clus.fit(xb, group=self.group if self.group > 1 else None)
@@ -300,7 +301,7 @@ class BGMM(GMM):
     def get_clus(self):
         clus = mix_models.BayesianGaussianMixture(n_components=self.k, n_init=3,
             covariance_type='full', weight_concentration_prior=1e5, reg_covar=self.reg_covar,
-            verbose=self.verbose, weight_concentration_prior_type='dirichlet_distribution', tol=0.1)
+            verbose=self.verbose, weight_concentration_prior_type='dirichlet_process', tol=0.1)
         return clus
 
 class Kmeans:
@@ -330,7 +331,7 @@ class Kmeans:
 
         # PCA-reducing, whitening and L2-normalization
         xb, self.mat = preprocess_features(data)
-
+        xb = data
         # cluster the data
 
         # I, D, loss, self.clus, self.index, self.flat_config = run_kmeans(xb, self.k, verbose)

@@ -31,15 +31,15 @@
 batch1=256
 batch2=256
 traj_enc='bow'
-K=50
+K=25
 gpu_id=0,1
 length=1
 group=50
 sobel='--sobel'
-prefix='kmeans+bgmm_bigpen_mod-e_'
+prefix='smallernet_kmeans+gmm_mod-e_'
 data='/data3/ajabri/vizdoom/single_env_hard_fixed1/0'
 clustering='Kmeans'
-clustering2='BGMM'
+clustering2='GMM'
 # clustering_export='BMM'
 reg_cov=0.001
 
