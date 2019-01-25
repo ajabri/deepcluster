@@ -243,7 +243,7 @@ import mixture as mix
 import mixture.models as mix_models
 
 class GMM:
-    def __init__(self, k, group=10, reg_covar=1e-4, clus=None, verbose=None):
+    def __init__(self, k, group=10, reg_covar=1e-3, clus=None, verbose=None):
         self.k = k
         self.group = group
         self.reg_covar = reg_covar
