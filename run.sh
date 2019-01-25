@@ -36,10 +36,10 @@ gpu_id=0,1
 length=1
 group=50
 sobel='--sobel'
-prefix='smallernet_kmeans+gmm_mod-e_'
+prefix='smallernet_kmeans+gmm_spherical_'
 data='/data3/ajabri/vizdoom/single_env_hard_fixed1/0'
 clustering='Kmeans'
-clustering2='GMM'
+clustering2='Kmeans'
 # clustering_export='BMM'
 reg_cov=0.001
 
@@ -49,11 +49,11 @@ do
     name=${prefix}_${clustering}_${traj_enc}_T${length}_K${K}_group${group}${sobel}_regcov${reg_cov}
     echo ${name}
 
-    CUDA_VISIBLE_DEVICES=${gpu_id} python3 dc_main.py $data \
-    --workers 20 $sobel \
-    --batch $batch1 --verbose --exp /tmp/${name} --group ${group} \
-    --k ${K} --traj_length ${length} --traj_enc ${traj_enc} --epochs 10 \
-    --export 0 --dump-html 0 --clustering ${clustering} --reg_covar ${reg_cov} #--lr 0.001 
+    # CUDA_VISIBLE_DEVICES=${gpu_id} python3 dc_main.py $data \
+    # --workers 20 $sobel \
+    # --batch $batch1 --verbose --exp /tmp/${name} --group ${group} \
+    # --k ${K} --traj_length ${length} --traj_enc ${traj_enc} --epochs 10 \
+    # --export 0 --dump-html 0 --clustering ${clustering} --reg_covar ${reg_cov} #--lr 0.001 
 
     CUDA_VISIBLE_DEVICES=${gpu_id} python3 export_clusters.py $data \
     --workers 20 --group ${group} $sobel --clustering ${clustering2} \

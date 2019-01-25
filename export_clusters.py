@@ -213,7 +213,7 @@ def export(args, model, dataloader, dataset):
     sorted_variance = np.argsort(c_var)[::-1]
 
     # import pdb; pdb.set_trace()
-    
+    maps = []
     for c, clus_idx in enumerate(sorted_variance):
     # for c, clus_idx in enumerate(sorted_self_dists):
         l = deepcluster.images_dists[clus_idx]
@@ -243,6 +243,7 @@ def export(args, model, dataloader, dataset):
         #     # po2 = [get_mask_from_coord(ppp) for ppp in pos[pos_idx[l]]]
 
         posum = env.make_pose_map(np.concatenate(poo), meta['objs'][0], sz=sz)
+        maps += [posum]
 
         # gifname = '%s/%s_%s.png' % (exp_name, c, 'map')
         gifname = '%s_%s.png' % (c, 'map')
@@ -299,7 +300,8 @@ def export(args, model, dataloader, dataset):
         #     # import pdb; pdb.set_trace()
     tw = TableWriter(table, '%s/%s' % (args.export_path, exp_name), rowsPerPage=min(args.nmb_cluster,100))
     tw.write()
-
+    out['maps'] = maps
+    
     # import pdb; pdb.set_trace()
     return out
 
