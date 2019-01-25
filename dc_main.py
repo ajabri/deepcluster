@@ -88,7 +88,7 @@ def main(args):
     # load the data
     end = time.time()
 
-    tra, (mean, std), (m1, std1), (norm, unnorm) = vis_utils.make_transform(args.data)
+    tra, (mean, std), (m1, std1), (norm, unnorm) = vis_utils.make_transform(args.data, sz=args.frame_size)
 
     if hasattr(args, 'pretransform'):
         tra = args.pretransform + tra

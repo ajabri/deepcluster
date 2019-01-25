@@ -89,7 +89,7 @@ def main(args):
     end = time.time()
 
     # smoother = models.mini_models.GaussianSmoothing(3, 5, 1)
-    tra, (mean, std), (m1, std1), (norm, unnorm) = vis_utils.make_transform(data_path)
+    tra, (mean, std), (m1, std1), (norm, unnorm) = vis_utils.make_transform(data_path, sz=args.frame_size)
 
     dataset = folder.ImageFolder(data_path, transform=transforms.Compose(tra),
             args=[args.ep_length, args.traj_length])
@@ -146,7 +146,7 @@ def export(args, model, dataloader, dataset):
     # self_index.add(centroids)         
     # self_dists = self_index.search(centroids, centroids.shape[0])
 
-    _, (mean, std), _, _ = vis_utils.make_transform(args.data)
+    _, (mean, std), _, _ = vis_utils.make_transform(args.data, sz=args.frame_size)
 
     model.features = model.features.module
 
@@ -301,7 +301,7 @@ def export(args, model, dataloader, dataset):
     tw = TableWriter(table, '%s/%s' % (args.export_path, exp_name), rowsPerPage=min(args.nmb_cluster,100))
     tw.write()
     out['maps'] = maps
-    
+
     # import pdb; pdb.set_trace()
     return out
 

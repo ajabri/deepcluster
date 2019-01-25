@@ -117,6 +117,8 @@ def get_argparse():
     parser.add_argument('--log-path', type=str, default='/data3/ajabri/deepcluster/logs/')
     parser.add_argument('--dump-html', type=int, default=0, help='dump html visualization')
 
+    parser.add_argument('--frame-size', type=int, default=128, help='random seed (default: 31)')
+
     return parser
 
 

@@ -19,7 +19,10 @@ def make_gif_from_tensor(tensor, outname, duration=0.2):
 
     imageio.mimsave(outname, images, 'GIF', duration=duration)
 
-def make_transform(data_path):
+def make_transform(data_path, sz=None):
+    if sz is None:
+        sz = 128
+        
     if 'vizdoom' in data_path:
         # import pdb; pdb.set_trace()
         # data_tensor = torch.from_numpy(np.load(data_path))
@@ -44,7 +47,7 @@ def make_transform(data_path):
                                 std=[1.0 / std[i] for i in range(3)])
 
         tra = [
-            transforms.Resize([128, 128]),
+            transforms.Resize([sz, sz]),
             transforms.ToTensor(),
             # transforms.Lambda(lambda x: smoother(x)),
             normalize,
