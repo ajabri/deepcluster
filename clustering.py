@@ -208,7 +208,7 @@ def run_kmeans(x, nmb_clusters, verbose=False):
     res = faiss.StandardGpuResources()
     flat_config = faiss.GpuIndexFlatConfig()
     flat_config.useFloat16 = False
-    flat_config.device = 0
+    flat_config.device = 0  
     index = faiss.GpuIndexFlatL2(res, d, flat_config)
 
     # import pdb; pdb.set_trace()
@@ -256,7 +256,7 @@ class GMM:
             self.clus.warm_start = True
 
     def get_clus(self):
-        clus = mix_models.GaussianMixture(n_components=self.k, covariance_type='full', n_init=3,
+        clus = mix_models.GaussianMixture(n_components=self.k, covariance_type='spherical', n_init=3,
             verbose=self.verbose, verbose_interval=1, tol=0.01, reg_covar=self.reg_covar)
         return clus
 

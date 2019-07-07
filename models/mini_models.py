@@ -1,75 +1,19 @@
 import torch
 from torch import nn
-
-
-class MiniAlexNet(nn.Module):
-    r"""
-    A variant of AlexNet.
-    The changes with respect to the original AlexNet are:
-        - LRN (local response normalization) layers are not included
-        - The Fully Connected (FC) layers (fc6 and fc7) have smaller dimensions
-          due to the lower resolution of mini-places images (128x128) compared
-          with ImageNet images (usually resized to 256x256)
-    """ 
-    def __init__(self, num_classes, sobel):
-        super(MiniAlexNet, self).__init__()
-        self.features = nn.Sequential(
-            nn.Conv2d(3, 96, kernel_size=11, stride=4),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=3, stride=2),
-            nn.Conv2d(96, 256, kernel_size=5, padding=2, groups=2),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=3, stride=2),
-            nn.Conv2d(256, 384, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(384, 384, kernel_size=3, padding=1, groups=2),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(384, 1024, kernel_size=3, padding=1, groups=2),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=3, stride=2),
-        )
-        self.classifier = nn.Sequential(
-            nn.Linear(1024, 1024),
-            nn.ReLU(inplace=True),
-            nn.Dropout(),
-            nn.Linear(1024, 1024),
-            nn.ReLU(inplace=True),
-        )
-        self.top_layer = nn.Sequential(
-            nn.Linear(1024, num_classes),
-        )
-        self.init_model()
-
-    def init_model(self):
-        def weights_init(m):
-            classname = m.__class__.__name__
-            if classname.find('Conv') != -1:
-                nn.init.kaiming_normal(m.weight.data)
-                if m.bias is not None:
-                    m.bias.data.zero_()
-            elif classname == 'Linear':
-                nn.init.normal(m.weight.data, std=0.01)
-                if m.bias is not None:
-                    m.bias.data.zero_()
-
-        self.apply(weights_init)
-        return self
-
-    def forward(self, input):
-        if self.sobel:
-            x = self.sobel(x)
-        x = self.features(x)
-        x = x.view(x.size(0), -1)  # flatten to a 2d tensor
-        x = self.classifier(features)
-        if self.top_layer:
-            x = self.top_layer(x)
-
-        return x
-
-
-import torch.nn as nn
 import math
 import torch.utils.model_zoo as model_zoo
+
+import math
+import numpy as np
+import torch
+import torchvision
+import torch.nn as nn
+import torch.nn.init as init
+import torch.nn.functional as F
+import torch.optim as optim
+from torchvision import datasets, transforms
+from torch.autograd import Variable
+import matplotlib.pyplot as plt
 
 __all__ = [
     'ResNet', 'resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152'
@@ -196,71 +140,95 @@ import numbers
 import torch
 from torch import nn
 from torch.nn import functional as F
+import scipy
 
 class GaussianSmoothing(nn.Module):
-    """
-    Apply gaussian smoothing on a
-    1d, 2d or 3d tensor. Filtering is performed seperately for each channel
-    in the input using a depthwise convolution.
-    Arguments:
-        channels (int, sequence): Number of channels of the input tensors. Output will
-            have this number of channels as well.
-        kernel_size (int, sequence): Size of the gaussian kernel.
-        sigma (float, sequence): Standard deviation of the gaussian kernel.
-        dim (int, optional): The number of dimensions of the data.
-            Default value is 2 (spatial).
-    """
-    def __init__(self, channels, kernel_size, sigma, dim=2):
+    def __init__(self, channels, kernel_size=7, sigma=3):
         super(GaussianSmoothing, self).__init__()
-        # if isinstance(kernel_size, numbers.Number):
-        #     kernel_size = [kernel_size] * dim
-        # if isinstance(sigma, numbers.Number):
-        #     sigma = [sigma] * dim
+        self.size = kernel_size
+        self.channels = channels
+        self.sigma = sigma
+ 
+        conv = nn.Conv2d(channels, channels, kernel_size, stride=1, padding=0, bias=None, groups=channels)
+        self.weight = conv.weight
+        self.weights_init()
 
-        # Create a x, y coordinate grid of shape (kernel_size, kernel_size, 2)
-        x_coord = torch.arange(kernel_size)
-        x_grid = x_coord.repeat(kernel_size).view(kernel_size, kernel_size)
-        y_grid = x_grid.t()
-        xy_grid = torch.stack([x_grid, y_grid], dim=-1).float()
+    def forward(self, x):
+        return F.conv2d(F.pad(x, (2, 2, 2, 2), mode='reflect'),  weight=self.weight, groups=self.channels)
 
-        mean = (kernel_size - 1)/2.
-        variance = sigma**2.
+    def weights_init(self):
+        n= np.zeros((self.size, self.size))
+        ss = self.size//2
+        n[ss,ss] = 1
 
-        # Calculate the 2-dimensional gaussian kernel which is
-        # the product of two gaussian distributions for two different
-        # variables (in this case called x and y)
-        gaussian_kernel = (1./(2.*math.pi*variance)) *\
-                        torch.exp(
-                            -torch.sum((xy_grid - mean)**2., dim=-1) /\
-                            (2*variance)
-                        )
+        k = scipy.ndimage.gaussian_filter(n,sigma=self.sigma)
+        self.weight.data.copy_(torch.from_numpy(k))
 
-        # Make sure sum of values in gaussian kernel equals 1.
-        gaussian_kernel = gaussian_kernel / torch.sum(gaussian_kernel)
 
-        # Reshape to 2d depthwise convolutional weight
-        gaussian_kernel = gaussian_kernel.view(1, 1, kernel_size, kernel_size)
-        gaussian_kernel = gaussian_kernel.repeat(channels, 1, 1, 1)
+# class GaussianSmoothing(nn.Module):
+#     """
+#     Apply gaussian smoothing on a
+#     1d, 2d or 3d tensor. Filtering is performed seperately for each channel
+#     in the input using a depthwise convolution.
+#     Arguments:
+#         channels (int, sequence): Number of channels of the input tensors. Output will
+#             have this number of channels as well.
+#         kernel_size (int, sequence): Size of the gaussian kernel.
+#         sigma (float, sequence): Standard deviation of the gaussian kernel.
+#         dim (int, optional): The number of dimensions of the data.
+#             Default value is 2 (spatial).
+#     """
+#     def __init__(self, channels, kernel_size, sigma, dim=2):
+#         super(GaussianSmoothing, self).__init__()
+#         # if isinstance(kernel_size, numbers.Number):
+#         #     kernel_size = [kernel_size] * dim
+#         # if isinstance(sigma, numbers.Number):
+#         #     sigma = [sigma] * dim
 
-        gaussian_filter = nn.Conv2d(in_channels=channels, out_channels=channels,
-                                    kernel_size=kernel_size, groups=channels, bias=False)
+#         # Create a x, y coordinate grid of shape (kernel_size, kernel_size, 2)
+#         x_coord = torch.arange(kernel_size)
+#         x_grid = x_coord.repeat(kernel_size).view(kernel_size, kernel_size)
+#         y_grid = x_grid.t()
+#         xy_grid = torch.stack([x_grid, y_grid], dim=-1).float()
 
-        gaussian_filter.weight.data = gaussian_kernel
-        gaussian_filter.weight.requires_grad = False
-        self.filter = gaussian_filter
+#         mean = (kernel_size - 1)/2.
+#         variance = sigma**2.
 
-        # return gaussian_filter
+#         # Calculate the 2-dimensional gaussian kernel which is
+#         # the product of two gaussian distributions for two different
+#         # variables (in this case called x and y)
+#         gaussian_kernel = (1./(2.*math.pi*variance)) *\
+#                         torch.exp(
+#                             -torch.sum((xy_grid - mean)**2., dim=-1) /\
+#                             (2*variance)
+#                         )
+
+#         # Make sure sum of values in gaussian kernel equals 1.
+#         gaussian_kernel = gaussian_kernel / torch.sum(gaussian_kernel)
+
+#         # Reshape to 2d depthwise convolutional weight
+#         gaussian_kernel = gaussian_kernel.view(1, 1, kernel_size, kernel_size)
+#         gaussian_kernel = gaussian_kernel.repeat(channels, 1, 1, 1)
+
+#         gaussian_filter = nn.Conv2d(in_channels=channels, out_channels=channels,
+#                                     kernel_size=kernel_size, groups=channels, bias=False)
+
+#         gaussian_filter.weight.data = gaussian_kernel
+#         gaussian_filter.weight.requires_grad = False
+#         self.filter = gaussian_filter
+
+#         # return gaussian_filter
         
 
-    def forward(self, input):
-        """
-        Apply gaussian filter to input.
-        Arguments:
-            input (torch.Tensor): Input to apply gaussian filter on.
-        Returns:
-            filtered (torch.Tensor): Filtered output.
-        """
-        return F.pad(self.filter(input), (2, 2, 2, 2), mode='reflect')
+#     def forward(self, input):
+#         """
+#         Apply gaussian filter to input.
+#         Arguments:
+#             input (torch.Tensor): Input to apply gaussian filter on.
+#         Returns:
+#             filtered (torch.Tensor): Filtered output.
+#         """
+#         return F.pad(self.filter(input), (2, 2, 2, 2), mode='reflect')
 
 
 class ResNet(nn.Module):
@@ -308,10 +276,11 @@ class ResNet(nn.Module):
         if traj_enc == 'bow':
             self.classifier =  nn.Sequential(
                                 # nn.Linear(256 * 4 * 4, 1024),
-                                nn.Linear(fcdim, fcdim),
+                                # nn.Linear(fcdim, fcdim),
                                 # nn.Linear(1120, fcdim),
                                 # nn.Linear(fcdim, fcdim),
-                                nn.ReLU(inplace=True))
+                                # nn.ReLU(inplace=True)
+                                )
         else:
             self.classifier =  nn.Sequential(
                                 # nn.Linear(256 * 4 * 4, 1024),
@@ -356,7 +325,9 @@ class ResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        # import pdb; pdb.set_trace()
+        # import visdom
+        # vis = visdom.Visdom(env='main2', port=8095)
+
         B, T, C, H, W = x.shape
 
         x = x.view(B*T, *x.shape[-3:])
@@ -364,27 +335,34 @@ class ResNet(nn.Module):
         if self.blur is not None:
             x = self.blur(x)
 
+            # xx = x.clone()
+            # xx[0][0] -= xx[0][0].min()
+            # xx[0][0] /= xx[0][0].max()
+
+            # xx[0][1] -= xx[0][1].min()
+            # xx[0][1] /= xx[0][1].max()            
+            
+            # xx[0][2] -= xx[0][2].min()
+            # xx[0][2] /= xx[0][2].max()
+            # vis.image(xx[0][0])
+            # vis.image(xx[0][1])
+            # vis.image(xx[0][2])
+
         if self.sobel is not None:
             x = self.sobel(x)
 
-        x = self.features(x)
-        # # print(x.shape)
-        # x = self.conv1(x)
-        # # print(x.shape)
-        # x = self.bn1(x)
-        # # print(x.shape)
-        # x = self.relu(x)
-        # # print(x.shape)
-        # x = self.maxpool(x)
+            # xx = x.clone()
+            # xx[0][0] -= xx[0][0].min()
+            # xx[0][0] /= xx[0][0].max()
 
-        # # print(x.shape)
-        # x = self.layer1(x)
-        # # print(x.shape)
-        # x = self.layer2(x)
-        # # print(x.shape)
-        # x = self.layer3(x)
-        # # print(x.shape)
-        # x = self.layer4(x)
+            # xx[0][1] -= xx[0][1].min()
+            # xx[0][1] /= xx[0][1].max()
+            # vis.image(xx[0][0])
+            # vis.image(xx[0][1])
+
+        # import pdb; pdb.set_trace() 
+
+        x = self.features(x)
 
         if not self.printed:
             print(x.shape)
@@ -414,12 +392,13 @@ class ResNet(nn.Module):
                     nn.ReLU(inplace=True))
         x = self.classifier(x)
 
+        self.feats = x.data.cpu()
+
         if self.top_layer:
             x = self.top_layer(x)
 
 
         return x
-
 
 
 def resnet18(sobel=False, bn=True, out=1000, pretrained=False, **kwargs):
@@ -428,24 +407,13 @@ def resnet18(sobel=False, bn=True, out=1000, pretrained=False, **kwargs):
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
     """
-    model = ResNet(BasicBlock, [2, 2, 1, 1], sobel=sobel, num_classes=out, **kwargs)
+    model = ResNet(BasicBlock, [1, 1, 1, 1], sobel=sobel, num_classes=out, **kwargs)
     add_sobel(model, sobel=sobel)
 
     if pretrained:
         model.load_state_dict(model_zoo.load_url(model_urls['resnet18']))
 
     return model
-
-# def resnet18(pretrained=False, **kwargs):
-#     """Constructs a ResNet-18 model.
-
-#     Args:
-#         pretrained (bool): If True, returns a model pre-trained on ImageNet
-#     """
-#     model = ResNet(BasicBlock, [2, 2, 2, 2], **kwargs)
-#     if pretrained:
-#         model.load_state_dict(model_zoo.load_url(model_urls['resnet18']))
-#     return model
 
 
 def resnet34(pretrained=False, **kwargs):
@@ -494,20 +462,6 @@ def resnet152(pretrained=False, **kwargs):
     if pretrained:
         model.load_state_dict(model_zoo.load_url(model_urls['resnet152']))
     return model
-
-
-import math
-import numpy as np
-import torch
-import torchvision
-import torch.nn as nn
-import torch.nn.init as init
-import torch.nn.functional as F
-import torch.optim as optim
-from torchvision import datasets, transforms
-from torch.autograd import Variable
-import matplotlib.pyplot as plt
-
 
 def getCAM(feature_conv, weight_fc, class_idx):
     _, nc, h, w = feature_conv.shape
@@ -569,42 +523,6 @@ def CAM(model, img):
 """
 import math
 import torch.nn as nn
-
-# class OmniglotEmbedding(nn.Module):
-#     """A CNN which transforms a 1x28x28 image to a 64-dimensional vector
-#     """
-
-#     def __init__(self):
-#         super(OmniglotEmbedding, self).__init__()
-#         self.cnn1 = nn.Sequential(
-#             nn.Conv2d(1, 64, 3, padding=1),
-#             nn.BatchNorm2d(64),
-#             nn.ReLU(inplace=True),
-#             nn.MaxPool2d(2, ceil_mode=True))
-#         self.cnn2 = nn.Sequential(
-#             nn.Conv2d(64, 64, 3, padding=1),
-#             nn.BatchNorm2d(64),
-#             nn.ReLU(inplace=True),
-#             nn.MaxPool2d(2, ceil_mode=True))
-#         self.cnn3 = nn.Sequential(
-#             nn.Conv2d(64, 64, 3, padding=1),
-#             nn.BatchNorm2d(64),
-#             nn.ReLU(inplace=True),
-#             nn.MaxPool2d(2, ceil_mode=True))
-#         self.cnn4 = nn.Sequential(
-#             nn.Conv2d(64, 64, 3, padding=1),
-#             nn.BatchNorm2d(64),
-#             nn.ReLU(inplace=True),
-#             nn.MaxPool2d(2, ceil_mode=True))
-#         self.fc = nn.Linear(256, 64)
-
-#     def forward(self, minibatch):
-#         out = self.cnn1(minibatch)
-#         out = self.cnn2(out)
-#         out = self.cnn3(out)
-#         out = self.cnn4(out)
-#         return self.fc(out.view(minibatch.size(0), -1))
-
 
 class SNAIL(nn.Module):
     """

@@ -8,55 +8,51 @@ import sys
 import numpy as np
 
 def has_file_allowed_extension(filename, extensions):
-    """Checks if a file is an allowed extension.
-    Args:
-        filename (string): path to a file
-        extensions (iterable of strings): extensions to consider (lowercase)
-    Returns:
-        bool: True if the filename ends with one of given extensions
-    """
     filename_lower = filename.lower()
     return any(filename_lower.endswith(ext) for ext in extensions)
 
+def make_dataset(dir, class_to_idx, extensions, stride, shingle, N=100000):
+    '''
+    Walks through
 
-def is_image_file(filename):
-    """Checks if a file is an allowed image extension.
-    Args:
-        filename (string): path to a file
-    Returns:
-        bool: True if the filename ends with a known image extension
-    """
-    return has_file_allowed_extension(filename, IMG_EXTENSIONS)
+    root/class/xxx.jpg
 
+    assume class to be index of a video
 
-def make_dataset(dir, class_to_idx, extensions, N=100000, args=None):
+    if stride is None, then will identify automatically
+    '''
+
     images = []
     iimages = []
     dir = os.path.expanduser(dir)
-    for target in sorted(class_to_idx.keys()):
+
+    for c_idx, target in enumerate(sorted(class_to_idx.keys())):
         d = os.path.join(dir, target)
         if not os.path.isdir(d):
             continue
 
-        if args is not None:
-            stride, length = args
-        else:
-            # stride, length = 50, 8
-            assert 'missing ep/traj length args'
-
         for root, _, fnames in sorted(os.walk(d)):
+            n_imgs =  sum([has_file_allowed_extension(fname, extensions) for fname in fnames])
+            length = n_imgs if stride is None else stride
+
+            import pdb; pdb.set_trace()
+
             for idx, fname in enumerate(sorted(fnames, key=lambda x: int(x.split('.')[0]))):
                 # import pdb; pdb.set_trace()
                 if has_file_allowed_extension(fname, extensions):
                     path = os.path.join(root, fname)
-                    item = (path, idx // stride)
+
+                    group_idx = c_idx if stride is None else idx // stride
+                    item = (path, group_idx)
 
                     images.append(item)
-                    if idx % stride >= length - 1:
-                        iimages.append(([im[0] for im in images[-length:]], images[-1][1]))
+            
+                    if idx % length >= shingle - 1:
+                        iimages.append(([im[0] for im in images[-shingle:]], images[-1][1]))
                         if N > 0 and len(iimages) >= N:
                             break
-    # import pdb; pdb.set_trace()
+            
+    import pdb; pdb.set_trace()
 
     return iimages
 
@@ -85,10 +81,11 @@ class DatasetFolder(data.Dataset):
         targets (list): The class_index value for each image in the dataset
     """
 
-    def __init__(self, root, loader, extensions, transform=None, target_transform=None, args=None, samples=None):
+    def __init__(self, root, loader, extensions, transform=None, target_transform=None, 
+        stride=None, shingle=1, samples=None):
         if samples is None:
             classes, class_to_idx = self._find_classes(root)
-            samples = make_dataset(root, class_to_idx, extensions, args=args)
+            samples = make_dataset(root, class_to_idx, extensions, stride=stride, shingle=shingle)
 
         if len(samples) == 0:
             raise(RuntimeError("Found 0 files in subfolders of: " + root + "\n"
@@ -117,13 +114,11 @@ class DatasetFolder(data.Dataset):
         Ensures:
             No class is a subdirectory of another.
         """
-        if sys.version_info >= (3, 5):
-            # Faster and available in Python 3.5 and above
-            classes = [d.name for d in os.scandir(dir) if d.is_dir()]
-        else:
-            classes = [d for d in os.listdir(dir) if os.path.isdir(os.path.join(dir, d))]
+
+        classes = [d for d in os.listdir(dir) if os.path.isdir(os.path.join(dir, d))]
         classes.sort()
         class_to_idx = {classes[i]: i for i in range(len(classes))}
+
         return classes, class_to_idx
 
     def __getitem__(self, index):
@@ -222,6 +217,8 @@ class ImageFolder(DatasetFolder):
         classes (list): List of the class names.
         class_to_idx (dict): Dict with items (class_name, class_index).
         imgs (list): List of (image path, class_index) tuples
+
+
     """
     def __init__(self, root, transform=None, target_transform=None,
                  loader=default_loader, args=None, samples=None):

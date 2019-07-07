@@ -27,10 +27,10 @@ import folder
 
 import clustering
 import dc_main as dc_main
+
 import models
 import util
 from util import AverageMeter, Logger, UnifLabelSampler
-
 
 import sys
 sys.path.append('../meta-vizdoom/')
@@ -104,8 +104,6 @@ def main(args):
     return export(args, model, dataloader, dataset)
 
 def export(args, model, dataloader, dataset):
-
-
     # remove head
     model.top_layer = None
     model.classifier = nn.Sequential(*list(model.classifier.children())[:-1])
@@ -150,7 +148,7 @@ def export(args, model, dataloader, dataset):
 
     model.features = model.features.module
 
-    c_mean, c_cov, c_var = get_means_and_variances(deepcluster, features, args)
+    # c_mean, c_cov, c_var = get_means_and_variances(deepcluster, features, args)
     resume = args.resume if len(args.resume) > 0 else args.exp
 
     out = {
@@ -210,12 +208,13 @@ def export(args, model, dataloader, dataset):
 
     num_show = 8
 
-    sorted_variance = np.argsort(c_var)[::-1]
+    # sorted_variance = np.argsort(c_var)[::-1]
 
     # import pdb; pdb.set_trace()
     maps = []
-    for c, clus_idx in enumerate(sorted_variance):
+    for clus_idx in range(len(deepcluster.images_dists)):
     # for c, clus_idx in enumerate(sorted_self_dists):
+        c = clus_idx
         l = deepcluster.images_dists[clus_idx]
 
         if len(l) == 0:
@@ -242,7 +241,11 @@ def export(args, model, dataloader, dataset):
         #     # po1 = [get_mask_from_coord(ppp) for ppp in pos[pos_idx[l]]]
         #     # po2 = [get_mask_from_coord(ppp) for ppp in pos[pos_idx[l]]]
 
-        posum = env.make_pose_map(np.concatenate(poo), meta['objs'][0], sz=sz)
+        if args.env == 'manip':
+            import manip
+            posum = manip.make_pose_map(np.concatenate(poo), sz=sz)
+        else:
+            posum = env.make_pose_map(np.concatenate(poo), meta['objs'][0], sz=sz)
         maps += [posum]
 
         # gifname = '%s/%s_%s.png' % (exp_name, c, 'map')
@@ -277,7 +280,7 @@ def export(args, model, dataloader, dataset):
         else:
             gl = np.array(l).reshape(-1, args.group)
             if args.group > 10:
-                exemplars = gl[random.sample(list(range(gl.shape[0])), min(gl.shape[0], 3))]
+                exemplars = gl[random.sample(list(range(gl.shape[0])), min(gl.shape[0], 5))]
             else:
                 exemplars = gl[random.sample(list(range(gl.shape[0])), min(gl.shape[0], 10))]
 

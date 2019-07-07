@@ -1,7 +1,7 @@
 # TODO
 # Try PIC and look at smallest clusters!
 
-
+ 
 # Copyright (c) 2017-present, Facebook, Inc.
 # All rights reserved.
 #
@@ -27,9 +27,10 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 from torch.utils.data import TensorDataset
 import folder
-import clustering
-import models
 
+import clustering
+
+import models
 import util
 from util import AverageMeter, Logger, UnifLabelSampler
 import vis_utils
@@ -42,10 +43,6 @@ def main(args):
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
     np.random.seed(args.seed)
-
-    # CNN
-    if args.verbose:
-        print('Architecture: {}'.format(args.arch))
 
     model = None
     if hasattr(args, 'model_resume'):
@@ -82,7 +79,7 @@ def main(args):
 
     # creating cluster assignments log
     cluster_log = Logger(os.path.join(args.exp, 'clusters'))
-
+    
     smoother = models.mini_models.GaussianSmoothing(3, 5, 1)
 
     # load the data
@@ -92,6 +89,8 @@ def main(args):
 
     if hasattr(args, 'pretransform'):
         tra = args.pretransform + tra
+
+    import pdb; pdb.set_trace()
 
     dataset = folder.ImageFolder(args.data, transform=transforms.Compose(tra),
         args=[args.ep_length, args.traj_length], samples=None if not hasattr(args, 'samples') else args.samples)
@@ -220,7 +219,6 @@ def train(loader, model, crit, opt, epoch, args):
     # create an optimizer for the last fc layer
     optimizer_tl = torch.optim.SGD(
         model.top_layer.parameters(),
-        lr=args.lr,
         weight_decay=10**args.wd,
     )
 
@@ -295,7 +293,7 @@ def compute_features(dataloader, model, N, args):
         aux = model(input_var).data.cpu().numpy()
         idx = idx.data.cpu().numpy()
         pose = pose.data.cpu().numpy()
-
+        
         if i == 0:
             features = np.zeros((N, aux.shape[1])).astype('float32')
             poses = np.zeros((N, pose.shape[1])).astype('float32')
@@ -303,12 +301,12 @@ def compute_features(dataloader, model, N, args):
 
         if i < len(dataloader) - 1:
             features[i * args.batch: (i + 1) * args.batch] = aux.astype('float32')
-            poses[i * args.batch: (i + 1) * args.batch] = pose.astype(np.int)            
+            poses[i * args.batch: (i + 1) * args.batch] = pose          
             idxs[i * args.batch: (i + 1) * args.batch] = idx.astype(np.int)
         else:
             # special treatment for final batch
             features[i * args.batch:] = aux.astype('float32')
-            poses[i * args.batch:] = pose.astype(np.int)            
+            poses[i * args.batch:] = pose       
             idxs[i * args.batch:] = idx.astype(np.int)
 
         # measure elapsed time
