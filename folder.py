@@ -19,7 +19,7 @@ def make_dataset(dir, class_to_idx, extensions, stride, shingle, N=100000):
 
     assume class to be index of a video
 
-    if stride is None, then will identify automatically
+    if stride < 0, then will identify automatically
     '''
 
     images = []
@@ -33,16 +33,13 @@ def make_dataset(dir, class_to_idx, extensions, stride, shingle, N=100000):
 
         for root, _, fnames in sorted(os.walk(d)):
             n_imgs =  sum([has_file_allowed_extension(fname, extensions) for fname in fnames])
-            length = n_imgs if stride is None else stride
-
-            import pdb; pdb.set_trace()
+            length = n_imgs if stride < 0 else stride
 
             for idx, fname in enumerate(sorted(fnames, key=lambda x: int(x.split('.')[0]))):
-                # import pdb; pdb.set_trace()
                 if has_file_allowed_extension(fname, extensions):
                     path = os.path.join(root, fname)
 
-                    group_idx = c_idx if stride is None else idx // stride
+                    group_idx = c_idx if stride < 0 else idx // stride
                     item = (path, group_idx)
 
                     images.append(item)
@@ -82,7 +79,7 @@ class DatasetFolder(data.Dataset):
     """
 
     def __init__(self, root, loader, extensions, transform=None, target_transform=None, 
-        stride=None, shingle=1, samples=None):
+        stride=-1, shingle=1, samples=None):
         if samples is None:
             classes, class_to_idx = self._find_classes(root)
             samples = make_dataset(root, class_to_idx, extensions, stride=stride, shingle=shingle)
@@ -221,9 +218,9 @@ class ImageFolder(DatasetFolder):
 
     """
     def __init__(self, root, transform=None, target_transform=None,
-                 loader=default_loader, args=None, samples=None):
+                 loader=default_loader, stride=-1, shingle=1, samples=None):
         super(ImageFolder, self).__init__(root, loader, IMG_EXTENSIONS,
                                           transform=transform,
                                           target_transform=target_transform,
-                                          args=args, samples=samples)
+                                          stride=stride, shingle=shingle, samples=samples)
         self.imgs = self.samples

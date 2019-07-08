@@ -16,7 +16,7 @@ from torch.autograd import Variable
 import matplotlib.pyplot as plt
 
 __all__ = [
-    'ResNet', 'resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152'
+    'ResNet', 'resnet10', 'resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152'
 ]
 
 model_urls = {
@@ -27,6 +27,10 @@ model_urls = {
     'resnet152': 'https://download.pytorch.org/models/resnet152-b121ed2d.pth',
 }
 
+
+class Identity(nn.Module):
+    def forward(self, x):
+        return x
 
 def conv3x3(in_planes, out_planes, stride=1):
     "3x3 convolution with padding"
@@ -141,6 +145,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 import scipy
+import scipy.ndimage
 
 class GaussianSmoothing(nn.Module):
     def __init__(self, channels, kernel_size=7, sigma=3):
@@ -164,80 +169,119 @@ class GaussianSmoothing(nn.Module):
         k = scipy.ndimage.gaussian_filter(n,sigma=self.sigma)
         self.weight.data.copy_(torch.from_numpy(k))
 
+class Encoder(nn.Module):
+    def __init__(self, sobel=False, blur=False, n_out=1, pretrained=False, 
+            frame_size=128, traj_enc='bow', traj_length='1'):
 
-# class GaussianSmoothing(nn.Module):
-#     """
-#     Apply gaussian smoothing on a
-#     1d, 2d or 3d tensor. Filtering is performed seperately for each channel
-#     in the input using a depthwise convolution.
-#     Arguments:
-#         channels (int, sequence): Number of channels of the input tensors. Output will
-#             have this number of channels as well.
-#         kernel_size (int, sequence): Size of the gaussian kernel.
-#         sigma (float, sequence): Standard deviation of the gaussian kernel.
-#         dim (int, optional): The number of dimensions of the data.
-#             Default value is 2 (spatial).
-#     """
-#     def __init__(self, channels, kernel_size, sigma, dim=2):
-#         super(GaussianSmoothing, self).__init__()
-#         # if isinstance(kernel_size, numbers.Number):
-#         #     kernel_size = [kernel_size] * dim
-#         # if isinstance(sigma, numbers.Number):
-#         #     sigma = [sigma] * dim
+        super(Encoder, self).__init__()
 
-#         # Create a x, y coordinate grid of shape (kernel_size, kernel_size, 2)
-#         x_coord = torch.arange(kernel_size)
-#         x_grid = x_coord.repeat(kernel_size).view(kernel_size, kernel_size)
-#         y_grid = x_grid.t()
-#         xy_grid = torch.stack([x_grid, y_grid], dim=-1).float()
-
-#         mean = (kernel_size - 1)/2.
-#         variance = sigma**2.
-
-#         # Calculate the 2-dimensional gaussian kernel which is
-#         # the product of two gaussian distributions for two different
-#         # variables (in this case called x and y)
-#         gaussian_kernel = (1./(2.*math.pi*variance)) *\
-#                         torch.exp(
-#                             -torch.sum((xy_grid - mean)**2., dim=-1) /\
-#                             (2*variance)
-#                         )
-
-#         # Make sure sum of values in gaussian kernel equals 1.
-#         gaussian_kernel = gaussian_kernel / torch.sum(gaussian_kernel)
-
-#         # Reshape to 2d depthwise convolutional weight
-#         gaussian_kernel = gaussian_kernel.view(1, 1, kernel_size, kernel_size)
-#         gaussian_kernel = gaussian_kernel.repeat(channels, 1, 1, 1)
-
-#         gaussian_filter = nn.Conv2d(in_channels=channels, out_channels=channels,
-#                                     kernel_size=kernel_size, groups=channels, bias=False)
-
-#         gaussian_filter.weight.data = gaussian_kernel
-#         gaussian_filter.weight.requires_grad = False
-#         self.filter = gaussian_filter
-
-#         # return gaussian_filter
+        self.traj_enc = traj_enc
+        self.traj_len = traj_length
+        self.frame_size = frame_size
+        self.n_inp_chan = 2 if sobel else 3
+        resnet_init = resnet10 if frame_size <= 128 else resnet18
         
+        self.resnet = resnet_init(in_chan=self.n_inp_chan, pretrained=pretrained)
 
-#     def forward(self, input):
-#         """
-#         Apply gaussian filter to input.
-#         Arguments:
-#             input (torch.Tensor): Input to apply gaussian filter on.
-#         Returns:
-#             filtered (torch.Tensor): Filtered output.
-#         """
-#         return F.pad(self.filter(input), (2, 2, 2, 2), mode='reflect')
+        self.features = [
+            self.resnet.conv1, self.resnet.bn1, self.resnet.relu, self.resnet.maxpool,
+            self.resnet.layer1, self.resnet.layer2, self.resnet.layer3
+        ]
 
+        if sum(self.resnet.layers) >= 8:
+            self.features += [self.resnet.layer4]
+
+        self.features = nn.Sequential(*(self.features + [self.resnet.avgpool]))
+
+        dummy_out = self.features(torch.Tensor(1, self.n_inp_chan, self.frame_size, self.frame_size))
+
+        self.map_shape = dummy_out[0].shape        
+        self.feat_dim = fcdim = self.map_shape[0] * self.map_shape[1] * self.map_shape[2]
+
+        if self.traj_enc == 'bow':
+            self.tc = None
+            self.classifier = nn.Sequential(
+                                # nn.Linear(fcdim, fcdim),
+                                # nn.ReLU(inplace=True)
+                                )
+            self.top_layer = nn.Linear(fcdim, n_out)  ## dummy
+
+        else:
+            self.classifier = nn.Sequential(
+                                # nn.Linear(self.tc.channel_count, fcdim),
+                                # nn.ReLU(inplace=True)
+                                )
+
+            self.tc = TCBlock(fcdim, self.traj_len, 32)
+            self.top_layer = nn.Linear(self.tc.channel_count, n_out)  ## dummy
+
+        self.printed = False
+
+        self.blur = None if not blur else GaussianSmoothing(3, 7, 5)
+        add_sobel(self, sobel=sobel)
+
+    def forward(self, x):
+        # import visdom
+        # vis = visdom.Visdom(env='main2', port=8095)
+
+        B, T, C, H, W = x.shape
+
+        x = x.view(B*T, *x.shape[-3:])
+
+        if self.blur is not None:
+            x = self.blur(x)
+            print('blurred')
+
+        if self.sobel is not None:
+            x = self.sobel(x)
+            print('sobelled')
+
+        x = self.features(x)
+
+        if not self.printed:
+            print(x.shape)
+            self.printed = True
+
+        # x = self.avgpool(x)
+
+        x = x.view(x.size(0), -1)
+        x = x.view(B, T, -1)
+
+        # x = torch.tanh(x[:, 1:] - x[:, :-1])
+
+        if self.traj_enc == 'temp_conv':
+            x = self.tc(x.transpose(1,2)).transpose(1,2)
+
+        # import pdb; pdb.set_trace()
+        x = x.mean(1)
+        # x = x[:, -1]
+
+        # in_channels, seq_len, filters
+
+        if self.classifier is None:
+            self.classifier = nn.Sequential(
+                    nn.Linear(x.shape[-1], 1024),
+                    # nn.Linear(256 * block.expansion, 1024),
+                    nn.ReLU(inplace=True))
+
+        x = self.classifier(x)
+
+        self.feats = x.data.cpu()
+
+        if self.top_layer:
+            x = self.top_layer(x)
+
+        return x
 
 class ResNet(nn.Module):
-    def __init__(self, block, layers, sobel=False, num_classes=1000, traj_enc='bow'):
-        self.inplanes = 64
+    def __init__(self, block, layers, n_inp_chan=3):
         super(ResNet, self).__init__()
-        n_inp_chan = 2 if sobel else 3
         print('ResNet has', sum(layers), 'layers')
-        if sum(layers) > 8 or True:
+
+        self.layers = layers
+        self.inplanes = 64
+
+        if sum(layers) < 8:
             self.conv1 = nn.Conv2d(
                 n_inp_chan, 64, kernel_size=5, stride=2, padding=2, bias=False)
 
@@ -248,63 +292,39 @@ class ResNet(nn.Module):
             self.layer2 = self._make_layer(block, 64, layers[1], stride=2)
             self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
             self.layer4 = self._make_layer(block, 64, layers[3], stride=2)
+            self.avgpool = nn.AvgPool2d(2, 2) # Identity()
+
         else:
+            # THIS IS THE DEFAULT
             self.conv1 = nn.Conv2d(
-                n_inp_chan, 64, kernel_size=5, stride=2, padding=2, bias=False)
+                n_inp_chan, 64, kernel_size=7, stride=2, padding=3, bias=False)
             self.bn1 = nn.BatchNorm2d(64)
             self.relu = nn.ReLU(inplace=True)
             self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-            self.layer1 = self._make_layer(block,  64, layers[0], stride=2)
+            self.layer1 = self._make_layer(block,  64, layers[0])
             self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
-            self.layer3 = self._make_layer(block, 128, layers[2], stride=2)
-            self.layer4 = self._make_layer(block, 128, layers[3], stride=2)
-
-        self.features = nn.Sequential(
-            self.conv1, self.bn1, self.relu, self.maxpool,
-            self.layer1, self.layer2, self.layer3 #, self.layer4
-        )
-
-        fcdim = 256
-        self.fcdim = fcdim
+            self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
+            self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
+            self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         
-        self.avgpool = nn.AvgPool2d(2, 2)
-
-        self.tc = TCBlock(fcdim, 8, 32)
-
-        self.traj_enc = traj_enc
-    
-        if traj_enc == 'bow':
-            self.classifier =  nn.Sequential(
-                                # nn.Linear(256 * 4 * 4, 1024),
-                                # nn.Linear(fcdim, fcdim),
-                                # nn.Linear(1120, fcdim),
-                                # nn.Linear(fcdim, fcdim),
-                                # nn.ReLU(inplace=True)
-                                )
-        else:
-            self.classifier =  nn.Sequential(
-                                # nn.Linear(256 * 4 * 4, 1024),
-                                nn.Linear(self.tc.channel_count, fcdim),
-                                # nn.Linear(1120, fcdim),
-                                # nn.Linear(fcdim, fcdim),
-                                nn.ReLU(inplace=True))
-
-        self.top_layer = nn.Linear(fcdim, num_classes)
-        self.printed = False
-        self.blur = GaussianSmoothing(3, 7, 5)
-
-
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
-                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-                m.weight.data.normal_(0, math.sqrt(2. / n))
-            elif isinstance(m, nn.BatchNorm2d):
-                m.weight.data.fill_(1)
-                m.bias.data.zero_()
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
 
+        # if zero_init_residual:
+        #     for m in self.modules():
+        #         if isinstance(m, Bottleneck):
+        #             nn.init.constant_(m.bn3.weight, 0)
+        #         elif isinstance(m, BasicBlock):
+        #             nn.init.constant_(m.bn2.weight, 0)
 
+    
     def _make_layer(self, block, planes, blocks, stride=1):
         downsample = None
+
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = nn.Sequential(
                 nn.Conv2d(
@@ -324,97 +344,35 @@ class ResNet(nn.Module):
 
         return nn.Sequential(*layers)
 
-    def forward(self, x):
-        # import visdom
-        # vis = visdom.Visdom(env='main2', port=8095)
+    def load_state_dict(self, pretrained_dict):
+        model_dict = self.state_dict()
 
-        B, T, C, H, W = x.shape
-
-        x = x.view(B*T, *x.shape[-3:])
-
-        if self.blur is not None:
-            x = self.blur(x)
-
-            # xx = x.clone()
-            # xx[0][0] -= xx[0][0].min()
-            # xx[0][0] /= xx[0][0].max()
-
-            # xx[0][1] -= xx[0][1].min()
-            # xx[0][1] /= xx[0][1].max()            
-            
-            # xx[0][2] -= xx[0][2].min()
-            # xx[0][2] /= xx[0][2].max()
-            # vis.image(xx[0][0])
-            # vis.image(xx[0][1])
-            # vis.image(xx[0][2])
-
-        if self.sobel is not None:
-            x = self.sobel(x)
-
-            # xx = x.clone()
-            # xx[0][0] -= xx[0][0].min()
-            # xx[0][0] /= xx[0][0].max()
-
-            # xx[0][1] -= xx[0][1].min()
-            # xx[0][1] /= xx[0][1].max()
-            # vis.image(xx[0][0])
-            # vis.image(xx[0][1])
-
-        # import pdb; pdb.set_trace() 
-
-        x = self.features(x)
-
-        if not self.printed:
-            print(x.shape)
-            self.printed = True
-
-        x = self.avgpool(x)
-        # x = torch.nn.functional.avg_pool2d(x, kernel_size=x.shape[-1])
-        x = x.view(x.size(0), -1)
-
-        x = x.view(B, T, -1)
-
-        # x = torch.tanh(x[:, 1:] - x[:, :-1])
-
-        # import pdb; pdb.set_trace()
-        if self.traj_enc == 'temp_conv':
-            x = self.tc(x.transpose(1,2)).transpose(1,2)
-
-        x = x.mean(1)
-        # x = x[:, -1]
-
-        # in_channels, seq_len, filters
-        # import pdb; pdb.set_trace()
-        if self.classifier is None:
-            self.classifier = nn.Sequential(
-                    nn.Linear(x.shape[-1], 1024),
-                    # nn.Linear(256 * block.expansion, 1024),
-                    nn.ReLU(inplace=True))
-        x = self.classifier(x)
-
-        self.feats = x.data.cpu()
-
-        if self.top_layer:
-            x = self.top_layer(x)
+        pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
+        model_dict.update(pretrained_dict) 
+        super(ResNet, self).load_state_dict(pretrained_dict)
 
 
-        return x
-
-
-def resnet18(sobel=False, bn=True, out=1000, pretrained=False, **kwargs):
+def resnet10(in_chan=3, pretrained=False, **kwargs):
     """Constructs a ResNet-18 model.
 
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
     """
-    model = ResNet(BasicBlock, [1, 1, 1, 1], sobel=sobel, num_classes=out, **kwargs)
-    add_sobel(model, sobel=sobel)
-
+    model = ResNet(BasicBlock, [1, 1, 1, 1], n_inp_chan=in_chan, **kwargs)
     if pretrained:
         model.load_state_dict(model_zoo.load_url(model_urls['resnet18']))
-
     return model
 
+def resnet18(in_chan=3, pretrained=False, **kwargs):
+    """Constructs a ResNet-18 model.
+
+    Args:
+        pretrained (bool): If True, returns a model pre-trained on ImageNet
+    """
+    model = ResNet(BasicBlock, [2, 2, 2, 2], n_inp_chan=in_chan, **kwargs)
+    if pretrained:
+        model.load_state_dict(model_zoo.load_url(model_urls['resnet18']))
+    return model
 
 def resnet34(pretrained=False, **kwargs):
     """Constructs a ResNet-34 model.

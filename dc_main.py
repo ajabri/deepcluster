@@ -42,7 +42,10 @@ def main(args):
         model = args.model_resume
         fd = model.fcdim
     else:    
-        model = models.__dict__[args.arch](sobel=args.sobel, traj_enc=args.traj_enc)
+        model = models.mini_models.Encoder(
+            sobel=args.sobel, blur=not args.no_blur, pretrained=args.pretrained, 
+            frame_size=args.frame_size, traj_enc=args.traj_enc, traj_length=args.traj_length)
+
         fd = int(model.top_layer.weight.size()[1])
     
     model.top_layer = None
@@ -83,10 +86,8 @@ def main(args):
     if hasattr(args, 'pretransform'):
         tra = args.pretransform + tra
 
-    import pdb; pdb.set_trace()
-
     dataset = folder.ImageFolder(args.data, transform=transforms.Compose(tra),
-        args=[args.ep_length, args.traj_length], samples=None if not hasattr(args, 'samples') else args.samples)
+        stride=args.ep_length, shingle=args.traj_length, samples=None if not hasattr(args, 'samples') else args.samples)
 
     if args.verbose: print('Load dataset: {0:.2f} s'.format(time.time() - end))
 
@@ -212,6 +213,7 @@ def train(loader, model, crit, opt, epoch, args):
     # create an optimizer for the last fc layer
     optimizer_tl = torch.optim.SGD(
         model.top_layer.parameters(),
+        lr=args.lr,
         weight_decay=10**args.wd,
     )
 

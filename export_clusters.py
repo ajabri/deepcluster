@@ -85,7 +85,7 @@ def main(args):
     tra, (mean, std), (m1, std1), (norm, unnorm) = vis_utils.make_transform(data_path, sz=args.frame_size)
 
     dataset = folder.ImageFolder(data_path, transform=transforms.Compose(tra),
-            args=[args.ep_length, args.traj_length])
+            stride=args.ep_length, shingle=args.traj_length)
 
     if verbose: print('Load dataset: {0:.2f} s'.format(time.time() - end))
     dataloader = torch.utils.data.DataLoader(dataset,

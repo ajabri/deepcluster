@@ -22,7 +22,9 @@ def make_gif_from_tensor(tensor, outname, duration=0.2):
 def make_transform(data_path, sz=None):
     if sz is None:
         sz = 128
-        
+   
+    mean, std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
+   
     if 'vizdoom' in data_path:
         # import pdb; pdb.set_trace()
         # data_tensor = torch.from_numpy(np.load(data_path))
@@ -42,34 +44,25 @@ def make_transform(data_path, sz=None):
         normalize = transforms.Normalize(mean=mean,
                                         std=std)
 
-        m1, std1 = [(-mean[i] / std[i]) for i in range(3)], [1.0 / std[i] for i in range(3)]
-        unnormalize = transforms.Normalize(mean=[(-mean[i] / std[i]) for i in range(3)],
-                                std=[1.0 / std[i] for i in range(3)])
-
         tra = [
             transforms.Resize([sz, sz]),
             transforms.ToTensor(),
-            # transforms.Lambda(lambda x: smoother(x)),
             normalize,
         ]
-        
-        # if 'bottom' in resume:
-        #     tra = [transforms.Resize([128, 128]),
-        #         transforms.Lambda(
-        #             # lambda crops: torch.stack([ToTensor()(crop) for crop in crops])
-        #         lambda x: transforms.functional.crop(x, 128/2, 0, 128/2, 128)
-        #     )] + tra
 
     else:
         # preprocessing of data
-        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                        std=[0.229, 0.224, 0.225])
+        normalize = transforms.Normalize(mean=mean,
+                                        std=std)
         tra = [transforms.Resize(256),
             transforms.CenterCrop(224),
             transforms.ToTensor(),
-            # transforms.Lambda(lambda x: smoother(x)),
             normalize,
         ]
+
+    m1, std1 = [(-mean[i] / std[i]) for i in range(3)], [1.0 / std[i] for i in range(3)]
+    unnormalize = transforms.Normalize(mean=[(-mean[i] / std[i]) for i in range(3)],
+                            std=[1.0 / std[i] for i in range(3)])
 
     return tra, (mean, std), (m1, std1), (normalize, unnormalize)
 

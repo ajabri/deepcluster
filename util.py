@@ -87,9 +87,11 @@ def get_argparse():
 
     parser.add_argument('data', metavar='DIR', help='path to dataset')
     parser.add_argument('--arch', '-a', type=str, metavar='ARCH',
-                        choices=['alexnet', 'vgg16', 'resnet18'], default='resnet18',
+                        choices=['resnet10', 'resnet18'], default='resnet10',
                         help='CNN architecture (default: alexnet)')
     parser.add_argument('--sobel', action='store_true', default=False, help='Sobel filtering')
+    parser.add_argument('--no-blur', action='store_true', default=False, help='No Blurring')
+    parser.add_argument('--pretrained', action='store_true', default=False, help='Imagenet Pretraining')
 
     parser.add_argument('--clustering', type=str, choices=['GMM', 'BGMM', 'Kmeans', 'PIC'],
                         default='Kmeans', help='clustering algorithm (default: Kmeans)')
