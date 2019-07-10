@@ -26,9 +26,6 @@ import util
 from util import AverageMeter, Logger, UnifLabelSampler
 
 import sys
-sys.path.append('../meta-vizdoom/')
-sys.path.append('../meta-vizdoom/ppo/')
-import env # VizDoom env
 
 sys.path.append('/home/ajabri/clones/deepcluster/html/PyHTMLWriter/src')
 from Element import Element
@@ -50,7 +47,6 @@ def main(args):
     clustering_type = args.clustering
     verbose = True #args.verbose
     nmb_cluster = args.nmb_cluster
-    arch = 'resnet18'
     workers = args.workers
 
     seed = 31
@@ -63,11 +59,17 @@ def main(args):
     torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
 
+
+    
+    model = models.encoder.Encoder(
+        sobel=args.sobel, blur=not args.no_blur, pretrained=args.pretrained, 
+        frame_size=args.frame_size, traj_enc=args.traj_enc,
+        traj_length=args.traj_length - (1 if args.optical_flow > 0 else 0)
+    )
+    
     # CNN
     if verbose:
-        print('Architecture: {}'.format(arch))
-    
-    model = models.__dict__[args.arch](sobel=args.sobel, traj_enc=args.traj_enc)
+        print(model)
     
     model.top_layer = None
     model.features = torch.nn.DataParallel(model.features)
@@ -75,17 +77,18 @@ def main(args):
     cudnn.benchmark = True
 
 
-    # optionally resume from a checkpoint
-    if resume:
-        util.resume_model(resume, model)
+    # force resume from a checkpoint
+    util.resume_model(resume, model)
 
     end = time.time()
 
-    # smoother = models.mini_models.GaussianSmoothing(3, 5, 1)
-    tra, (mean, std), (m1, std1), (norm, unnorm) = vis_utils.make_transform(data_path, sz=args.frame_size)
+    # smoother = models.encoder.GaussianSmoothing(3, 5, 1)
+    tra, (mean, std), (m1, std1), (norm, unnorm) = vis_utils.make_transform(
+        data_path, sz=args.frame_size, flow=args.optical_flow > 0)
 
     dataset = folder.ImageFolder(data_path, transform=transforms.Compose(tra),
-            stride=args.ep_length, shingle=args.traj_length)
+            stride=args.ep_length, shingle=args.traj_length, N=args.N,
+            frame_skip=args.frame_skip, flow=args.optical_flow > 0)
 
     if verbose: print('Load dataset: {0:.2f} s'.format(time.time() - end))
     dataloader = torch.utils.data.DataLoader(dataset,
@@ -121,7 +124,7 @@ def export(args, model, dataloader, dataset):
 
     # clustering algorithm to use
     deepcluster = clustering.__dict__[args.clustering_export](args.nmb_cluster, group=args.group,
-        reg_covar=args.reg_covar, clus=clus_resume, verbose=args.verbose)
+        reg_covar=args.reg_covar, clus=clus_resume) #, verbose=args.verbose)
 
     # cluster the features
     clustering_loss = deepcluster.cluster(features, group_transform=args.group_transform>0)
@@ -160,21 +163,29 @@ def export(args, model, dataloader, dataset):
 
     T = args.traj_length
     
-    pos = pos1
+    make_maps = hasattr(args, 'env') #and args.env == 'manip' or args.env == 'vizdoom'
 
-    if sum(sum(pos)) == 0:
-        meta = torch.load('%s/meta.dict' % args.data)
+    if make_maps:
+        pos = pos1
 
-        pos = np.array(meta['pos'])
+        sys.path.append('../meta-vizdoom/')
+        sys.path.append('../meta-vizdoom/ppo/')
+        import env # VizDoom env
+        import manip
 
-        pos_idx = np.arange(pos.shape[0]*pos.shape[1])
-        pos_idx = pos_idx.reshape(pos.shape[0], pos.shape[1])[:, T-1:]
-        pos_idx = pos_idx.reshape(pos_idx.shape[0] * pos_idx.shape[1])
+        if sum(sum(pos)) == 0:
+            meta = torch.load('%s/meta.dict' % args.data)
 
-        pos = pos.reshape(pos.shape[0]*pos.shape[1], pos.shape[2])
-    else:
-        meta = torch.load('/data3/ajabri/vizdoom/single_env_hard_fixed1/0/meta.dict')
-        pos_idx = np.arange(pos.shape[0])
+            pos = np.array(meta['pos'])
+            pos_idx = np.arange(pos.shape[0]*pos.shape[1])
+            pos_idx = pos_idx.reshape(pos.shape[0], pos.shape[1])[:, T-1:]
+            pos_idx = pos_idx.reshape(pos_idx.shape[0] * pos_idx.shape[1])
+
+            pos = pos.reshape(pos.shape[0]*pos.shape[1], pos.shape[2])
+        else:
+
+            meta = torch.load('/data3/ajabri/vizdoom/single_env_hard_fixed1/0/meta.dict')
+            pos_idx = np.arange(pos.shape[0])
 
     # import pdb; pdb.set_trace()
 
@@ -183,12 +194,6 @@ def export(args, model, dataloader, dataset):
     from scipy.ndimage.filters import gaussian_filter
     # sorted_self_dists = np.argsort(self_dists[0][:, 1])[::-1]
     # sorted_self_dists = np.argsort(self_dists[0].sum(axis=-1))[::-1]
-    
-    smoother1 = models.mini_models.GaussianSmoothing(3, 5, 5)
-    smoother2 = models.mini_models.GaussianSmoothing(3, 7, 5)
-    smoother3 = models.mini_models.GaussianSmoothing(3, 7, 7)
-    smoother4 = models.mini_models.GaussianSmoothing(3, 9, 7)
-
 
     exp_name = args.resume.split('/')[-2] if args.resume != '' else args.exp.split('/')[-1]
     out_root = '%s/%s' % (args.export_path, exp_name)
@@ -198,12 +203,8 @@ def export(args, model, dataloader, dataset):
         os.makedirs(out_root)
 
     table = Table()
+    num_show = 20
 
-    num_show = 8
-
-    # sorted_variance = np.argsort(c_var)[::-1]
-
-    # import pdb; pdb.set_trace()
     maps = []
     for clus_idx in range(len(deepcluster.images_dists)):
     # for c, clus_idx in enumerate(sorted_self_dists):
@@ -222,41 +223,48 @@ def export(args, model, dataloader, dataset):
         row = TableRow(rno=c)
 
         e = Element()
-        e.addTxt('size: %s <br>variance: %s' % (len(deepcluster.images_dists[clus_idx]), c_var[clus_idx]))
+        # e.addTxt('size: %s <br>variance: %s' % (len(deepcluster.images_dists[clus_idx]), c_var[clus_idx]))
+        e.addTxt('size: %s' % (len(deepcluster.images_dists[clus_idx])))
         row.addElement(e)
 
         # import pdb; pdb.set_trace()
 
-        ## MAP
-        poo = []
-        for t in range(T):
-            poo += [pos[pos_idx[l] - t]]
-        #     # po1 = [get_mask_from_coord(ppp) for ppp in pos[pos_idx[l]]]
-        #     # po2 = [get_mask_from_coord(ppp) for ppp in pos[pos_idx[l]]]
+        if make_maps:
+            poo = []
+            for t in range(T):
+                poo += [pos[pos_idx[l] - t]]
+            #     # po1 = [get_mask_from_coord(ppp) for ppp in pos[pos_idx[l]]]
+            #     # po2 = [get_mask_from_coord(ppp) for ppp in pos[pos_idx[l]]]
 
-        if args.env == 'manip':
-            import manip
-            posum = manip.make_pose_map(np.concatenate(poo), sz=sz)
-        else:
-            posum = env.make_pose_map(np.concatenate(poo), meta['objs'][0], sz=sz)
-        maps += [posum]
+            if args.env == 'manip':
+                posum = manip.make_pose_map(np.concatenate(poo), sz=sz)
+            else:
+                posum = env.make_pose_map(np.concatenate(poo), meta['objs'][0], sz=sz)
+            maps += [posum]
 
-        # gifname = '%s/%s_%s.png' % (exp_name, c, 'map')
-        gifname = '%s_%s.png' % (c, 'map')
-        gifpath = '%s/%s' % (out_root, gifname)
+            # gifname = '%s/%s_%s.png' % (exp_name, c, 'map')
+            gifname = '%s_%s.png' % (c, 'map')
+            gifpath = '%s/%s' % (out_root, gifname)
 
-        imageio.imwrite(gifpath,
-            cv2.resize((posum*255.).astype(np.uint8).transpose(1, 2, 0), 
-                (0,0), fx=5, fy=5, interpolation = cv2.INTER_AREA))
+            imageio.imwrite(gifpath,
+                cv2.resize((posum*255.).astype(np.uint8).transpose(1, 2, 0), 
+                    (0,0), fx=5, fy=5, interpolation = cv2.INTER_AREA))
 
-        e = Element()
-        e.addImg(gifname, width=180)
-        row.addElement(e)
+            e = Element()
+            e.addImg(gifname, width=180)
+            row.addElement(e)
         
         ## EXEMPLARS
-        if not args.group_transform > 0:
+        # import pdb; pdb.set_trace()
+
+        if not (args.group_transform > 0 and args.group > 1):
             for iii, i in enumerate(ll):
+                if iii >= len(ll)//2:               # divider for random vs top
+                    row.addElement(Element())
+
                 imgs = vis_utils.unnormalize_batch(dataset[i][0], mean, std)
+
+                # import pdb; pdb.set_trace()
 
                 gifname = '%s_%s.gif' % (c, i)
                 gifpath = '%s/%s' % (out_root, gifname)
@@ -271,12 +279,16 @@ def export(args, model, dataloader, dataset):
                 e.addImg(gifname, width=128)
                 row.addElement(e)
         else:
+            ## HACK NOTE that this assumes that traj_len is 1
             gl = np.array(l).reshape(-1, args.group)
+            # import pdb; pdb.set_trace()
+
             if args.group > 10:
                 exemplars = gl[random.sample(list(range(gl.shape[0])), min(gl.shape[0], 5))]
             else:
                 exemplars = gl[random.sample(list(range(gl.shape[0])), min(gl.shape[0], 10))]
 
+            import pdb; pdb.set_trace()
             for iii, i in enumerate(exemplars):
                 imgs = np.stack([dataset[_idx][0][0] for _idx in i])
                 imgs = vis_utils.unnormalize_batch(imgs, mean, std)

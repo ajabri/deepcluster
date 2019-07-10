@@ -42,17 +42,29 @@ def main(args):
         model = args.model_resume
         fd = model.fcdim
     else:    
-        model = models.mini_models.Encoder(
+        model = models.encoder.Encoder(
             sobel=args.sobel, blur=not args.no_blur, pretrained=args.pretrained, 
-            frame_size=args.frame_size, traj_enc=args.traj_enc, traj_length=args.traj_length)
+            frame_size=args.frame_size, traj_enc=args.traj_enc,
+            traj_length=args.traj_length - (1 if args.optical_flow > 0 else 0)
+        )
+        print('Creating model')
 
         fd = int(model.top_layer.weight.size()[1])
     
-    model.top_layer = None
-    model.features = torch.nn.DataParallel(model.features)
-    model.cuda()
-    cudnn.benchmark = True
+    if args.verbose:
+        print(model)
     
+    model.top_layer = None
+
+    if len(os.environ.get('CUDA_VISIBLE_DEVICES').split(',')) != 1:
+        print('DataParallel-ing Model')
+        model.features = torch.nn.DataParallel(model.features)
+
+    print('Cuda-ing model')
+    model.cuda()
+    cudnn.benchmark = True    
+    print('Prepped model')
+
     # create optimizer
     optimizer = torch.optim.SGD(
         filter(lambda x: x.requires_grad, model.parameters()),
@@ -76,34 +88,41 @@ def main(args):
     # creating cluster assignments log
     cluster_log = Logger(os.path.join(args.exp, 'clusters'))
     
-    smoother = models.mini_models.GaussianSmoothing(3, 5, 1)
+    smoother = models.encoder.GaussianSmoothing(3, 5, 1)
 
     # load the data
     end = time.time()
 
-    tra, (mean, std), (m1, std1), (norm, unnorm) = vis_utils.make_transform(args.data, sz=args.frame_size)
+    tra, (mean, std), (m1, std1), (norm, unnorm) = vis_utils.make_transform(
+        args.data, sz=args.frame_size, normalize=args.optical_flow > 0)
 
     if hasattr(args, 'pretransform'):
         tra = args.pretransform + tra
 
+    print('Prepping dataset')
     dataset = folder.ImageFolder(args.data, transform=transforms.Compose(tra),
-        stride=args.ep_length, shingle=args.traj_length, samples=None if not hasattr(args, 'samples') else args.samples)
+        stride=args.ep_length, shingle=args.traj_length,
+        samples=None if not hasattr(args, 'samples') else args.samples,
+        N=args.N, frame_skip=args.frame_skip, flow=args.optical_flow > 0)
+        
+    print('Prepped dataset')
 
     if args.verbose: print('Load dataset: {0:.2f} s'.format(time.time() - end))
 
     # import bow_dataset
     dataloader = torch.utils.data.DataLoader(dataset,
                                             #  batch_sampler=sampler,
-                                             shuffle=False,
+                                             shuffle=True,
                                              batch_size=args.batch,
                                              num_workers=args.workers,
                                              pin_memory=True)
+    print('Prepped dataloader')
 
     # clustering algorithm to use
     if args.group > 1:
         args.group = args.ep_length - args.traj_length + 1
     
-    deepcluster = clustering.__dict__[args.clustering](args.nmb_cluster, group=args.group, reg_covar=args.reg_covar, verbose=args.verbose)
+    deepcluster = clustering.__dict__[args.clustering](args.nmb_cluster, group=args.group, reg_covar=args.reg_covar) #, verbose=args.verbose)
 
     # training convnet with DeepCluster
     for epoch in range(args.start_epoch, args.epochs):

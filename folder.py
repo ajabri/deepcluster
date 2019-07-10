@@ -6,12 +6,14 @@ import os
 import os.path
 import sys
 import numpy as np
+import cv2
+import time
 
 def has_file_allowed_extension(filename, extensions):
     filename_lower = filename.lower()
     return any(filename_lower.endswith(ext) for ext in extensions)
 
-def make_dataset(dir, class_to_idx, extensions, stride, shingle, N=100000):
+def make_dataset(dir, class_to_idx, extensions, stride, shingle, N=-1, frame_skip=1):
     '''
     Walks through
 
@@ -35,7 +37,7 @@ def make_dataset(dir, class_to_idx, extensions, stride, shingle, N=100000):
             n_imgs =  sum([has_file_allowed_extension(fname, extensions) for fname in fnames])
             length = n_imgs if stride < 0 else stride
 
-            for idx, fname in enumerate(sorted(fnames, key=lambda x: int(x.split('.')[0]))):
+            for idx, fname in enumerate(sorted(fnames, key=lambda x: int(x.split('.')[0]))[::frame_skip]):
                 if has_file_allowed_extension(fname, extensions):
                     path = os.path.join(root, fname)
 
@@ -49,7 +51,7 @@ def make_dataset(dir, class_to_idx, extensions, stride, shingle, N=100000):
                         if N > 0 and len(iimages) >= N:
                             break
             
-    import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
 
     return iimages
 
@@ -79,10 +81,11 @@ class DatasetFolder(data.Dataset):
     """
 
     def __init__(self, root, loader, extensions, transform=None, target_transform=None, 
-        stride=-1, shingle=1, samples=None):
+        stride=-1, shingle=1, samples=None, N=-1, frame_skip=1, flow=0):
         if samples is None:
             classes, class_to_idx = self._find_classes(root)
-            samples = make_dataset(root, class_to_idx, extensions, stride=stride, shingle=shingle)
+            samples = make_dataset(root, class_to_idx, extensions,
+                stride=stride, shingle=shingle, N=N, frame_skip=frame_skip)
 
         if len(samples) == 0:
             raise(RuntimeError("Found 0 files in subfolders of: " + root + "\n"
@@ -91,6 +94,7 @@ class DatasetFolder(data.Dataset):
         self.root = root
         self.loader = loader
         self.extensions = extensions
+        self.flow = flow
 
         # self.classes = classes
         # self.class_to_idx = class_to_idx
@@ -134,25 +138,94 @@ class DatasetFolder(data.Dataset):
         if self.target_transform is not None:
             target = self.target_transform(target)
 
-        # import visdom
-        # vis = visdom.Visdom(server='http://alan.ist.berkeley.edu', port=8095)
-
         def _sample(path):
             if isinstance(path, str):
                 sample = self.loader(path)
             else:
                 sample = path
             
-            # vis.image(np.array(sample).transpose(2, 0,1))
-            if self.transform is not None:
-                sample = self.transform(sample)
-
             return sample
+        
+        samples = [_sample(p) for p in path]
 
-        sample = np.stack([_sample(p) for p in path])
+        if self.flow > 0:
 
+            assert len(samples) > 1, "need more than one frame per sample for flow"
+            gray_samples = [cv2.cvtColor(np.array(s), cv2.COLOR_BGR2GRAY) for s in samples]
+            
+            for i in range(len(samples)-1):
+                ff = None
+
+                # try to reload flow
+                if isinstance(path[0], str):
+                    # get flow path
+                    flow_dir = os.path.dirname(path[i]).replace('frames', 'flow')
+                    p1 = os.path.basename(path[i])
+                    p2 = os.path.basename(path[i+1])
+                    flow_p1p2 = os.path.join([flow_dir, p1, p2])
+
+                    if not os.path.exists(flow_p1p1):
+                        os.makedirs(flow_dir, exist_ok=True)
+
+                        ff = Image.fromarray(np.uint8(
+                            self.compute_flow(gray_samples[i],
+                            gray_samples[i+1]) * 255.0))
+                        np.save(flow_p1p2, ff)
+                    else:
+                        print('loaded', p1p2)
+                        ff = np.load(flow_p1p2)
+
+                if ff is None:
+                    ff = Image.fromarray(np.uint8(
+                            self.compute_flow(gray_samples[i],
+                            gray_samples[i+1]) * 255.0))
+                
+                flows.append(ff)
+
+            if self.flow == 1:
+                samples = flows
+            elif self.flow == 2:
+                samples = [np.concatenate([s, f], axis=0) for (s,f) in zip(samples, flows)]
+
+            # HACK, only flow?
+
+        # vis.image(np.array(sample).transpose(2, 0,1))
+        if self.transform is not None:
+            samples = [self.transform(s) for s in samples]
+
+        sample = np.stack(samples)
         
         return sample, target, pos
+    
+    def compute_flow(self, x, y):
+        hsv = np.zeros((*x.shape, 3))
+        hsv[...,1] = 255
+
+        t0 = time.time()
+        flow = cv2.calcOpticalFlowFarneback(x, y, None, 0.5, 3, 15, 3, 5, 1.2, 0)
+        t1 = time.time()
+
+        mag, ang = cv2.cartToPolar(flow[...,0], flow[...,1])
+        t2 = time.time()
+
+        hsv[...,0] = ang*180/np.pi/2
+        hsv[...,2] = cv2.normalize(mag,None,0,255,cv2.NORM_MINMAX)
+        t3 = time.time()
+        bgr = cv2.cvtColor(hsv.astype(np.float32),cv2.COLOR_HSV2BGR).clip(min=0)/255.0 #.transpose(2, 0, 1)
+        t4 = time.time()
+
+        # print(t2-t1, t1-t0)
+        # print(t4-t3, t3-t2, t2-t1, t1-t0)
+        # import visdom; vis = visdom.Visdom(port=8095, env='main2')
+        # vis.image(x)
+        # vis.image(y)
+        # vis.image(bgr.transpose(2, 0, 1).clip(min=0))
+        # vis.text('', opts=dict(width=10000, height=5))
+        # time.sleep(1)
+
+        # import pdb; pdb.set_trace()
+        # return np.concatenate([mag[None], ang[None], bgr])
+        return bgr
 
     def __len__(self):
         return len(self.samples)
@@ -218,9 +291,11 @@ class ImageFolder(DatasetFolder):
 
     """
     def __init__(self, root, transform=None, target_transform=None,
-                 loader=default_loader, stride=-1, shingle=1, samples=None):
+                 loader=default_loader, stride=-1, shingle=1, samples=None, N=-1,
+                 frame_skip=1, flow=0):
         super(ImageFolder, self).__init__(root, loader, IMG_EXTENSIONS,
                                           transform=transform,
                                           target_transform=target_transform,
-                                          stride=stride, shingle=shingle, samples=samples)
+                                          stride=stride, shingle=shingle, samples=samples,
+                                          N=N, frame_skip=frame_skip, flow=flow)
         self.imgs = self.samples

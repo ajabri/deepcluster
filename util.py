@@ -96,7 +96,7 @@ def get_argparse():
     parser.add_argument('--clustering', type=str, choices=['GMM', 'BGMM', 'Kmeans', 'PIC'],
                         default='Kmeans', help='clustering algorithm (default: Kmeans)')
     parser.add_argument('--clustering_export', type=str, choices=['GMM', 'BGMM', 'Kmeans', 'PIC'],
-                        default='', help='clustering algorithm for exported model (default: Kmeans)')
+                        default='Kmeans', help='clustering algorithm for exported model (default: Kmeans)')
 
     parser.add_argument('--nmb_cluster', '--k', type=int, default=1000,
                         help='number of cluster for k-means (default: 10000)')
@@ -138,7 +138,10 @@ def get_argparse():
     parser.add_argument('--log-path', type=str, default='/data3/ajabri/deepcluster/logs/')
     parser.add_argument('--dump-html', type=int, default=0, help='dump html visualization')
 
-    parser.add_argument('--frame-size', type=int, default=128, help='random seed (default: 31)')
+    parser.add_argument('--frame-size', type=int, default=128, help='size of image')
+    parser.add_argument('--frame-skip', type=int, default=1,   help='sample every x frames')
+    parser.add_argument('--N', type=int, default=-1, help='cap on number of examples')
+    parser.add_argument('--optical-flow', type=int, default=0, help='use optical flow features')
 
     return parser
 

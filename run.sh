@@ -29,8 +29,8 @@
 # K=$2
 # gpu_id=$3
 
-batch1=256
-batch2=256
+batch1=64
+batch2=64
 traj_enc='bow'
 K=25
 gpu_id=0

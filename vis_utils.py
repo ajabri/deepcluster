@@ -19,28 +19,20 @@ def make_gif_from_tensor(tensor, outname, duration=0.2):
 
     imageio.mimsave(outname, images, 'GIF', duration=duration)
 
-def make_transform(data_path, sz=None):
+def make_transform(data_path, sz=None, normalize=True):
     if sz is None:
         sz = 128
+
+    mean, std = [0, 0, 0], [1, 1, 1]
    
-    mean, std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
-   
+    if normalize:
+        mean, std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
+
+        if 'vizdoom' in data_path:
+            std = [0.12303435, 0.13653513, 0.16653976]
+            mean = [0.4091152 , 0.38996586, 0.35839223]
+
     if 'vizdoom' in data_path:
-        # import pdb; pdb.set_trace()
-        # data_tensor = torch.from_numpy(np.load(data_path))
-        # dataset = TensorDataset(data_tensor)
-
-        # if '/data/' in data_path:
-        # # preprocessing of data
-        #     mean = [0.29501004, 0.34140844, 0.3667595 ]
-        #     std = [0.16179572, 0.1323428 , 0.1213659 ]
-
-        # elif '/data3/' in data_path:
-        std = [0.12303435, 0.13653513, 0.16653976]
-        mean = [0.4091152 , 0.38996586, 0.35839223]
-        # else:
-        #     assert False, 'which normalization?'
-
         normalize = transforms.Normalize(mean=mean,
                                         std=std)
 
